@@ -252,7 +252,7 @@ without disturbing them. nginx config lives in `/etc/nginx/sites-enabled/default
 
 ## 9. Builder verification checklist
 
-- [ ] `tsc --noEmit` clean; build succeeds.
+- [ ] `pnpm typecheck` clean (covers `tsconfig.server.json` AND `src/webapp/tsconfig.json`); `pnpm build` succeeds.
 - [ ] No secrets in logs or git history.
 - [ ] Register + login work; `POST /api/connect` with real credentials returns
       ALL accounts (demo + live tagged) — this proves `isLive` routing.
@@ -264,11 +264,76 @@ without disturbing them. nginx config lives in `/etc/nginx/sites-enabled/default
 - [ ] Serverside restart mid-session does not require re-entering credentials.
 - [ ] Poll loop never opens more than two sockets per user total.
 
-## 10. Phase 2+ roadmap (not this build)
+## 10. Phase 2 — manual order management (create / modify / close)
+
+Agreed direction (folded in 2026-09-14). This app already reads everything it
+needs (per-user per-env sockets with account re-auth + token rotation, cacheable
+symbol specs, a single-flight reconcile); phase 2 turns those read paths into
+manual writes. Use doochy **only** as protocol reference — do NOT port its
+automation: `/home/san/doochy/src/ctrader/orders.ts`, `amend.ts`,
+`risk/midnightClose.ts`, `bot/commands/order.ts`.
+
+### Scope (in) / (out)
+- IN: place market/limit/stop orders; move a resting order's level + SL/TP;
+  cancel a resting order; close a position; edit a position's SL/TP.
+- OUT: no doochy automation — no risk engine, cooldowns, profit caps, signal
+  sizing, or auto-anything. Manual management only; say so in UI copy.
+
+### Broker calls (protocol only)
+| Op | Command | Correlation |
+| --- | --- | --- |
+| Market | `ProtoOANewOrderReq { orderType:"MARKET", tradeSide, volume, timeInForce:"IMMEDIATE_OR_CANCEL", label }` | label → accept/fill on `ProtoOAExecutionEvent` |
+| Limit/Stop | same req, `LIMIT`/`STOP`, `limitPrice`/`stopPrice`, `GOOD_TILL_CANCEL` (or `expirationTimestamp`), SL/TP attached | label |
+| Amend order | `ProtoOAAmendOrderReq { orderId, volume, limitPrice\|stopPrice, stopLoss?, takeProfit?, expirationTimestamp? }` | `clientMsgId`; confirm = `ORDER_REPLACED`, reject = `ProtoOAOrderErrorEvent` |
+| Cancel order | `ProtoOACancelOrderReq { orderId }` | — |
+| Close position | `ProtoOAClosePositionReq { positionId, volume }` | — |
+| Position SL/TP | `ProtoOAAmendPositionSLTPReq { positionId, stopLoss?, takeProfit? }` — amend **replaces** both sides, resend both | `clientMsgId` |
+
+There are **no synchronous responses**: every op resolves async via execution
+events with a timeout (doochy: 10s rest-ack, 30s market-fill, 5s amend). One
+shared `waitForOrderOutcome(msgId/label)` helper on `ProtoOAExecutionEvent` +
+`ProtoOAOrderErrorEvent`; order-error events echo `clientMsgId`.
+
+### Server — new `src/server/ctrader/execute.ts`
+`placeOrder / amendOrder / cancelOrder / closePosition / amendPositionSLTP`,
+each returning `{ ok, error?, description? }`. Routes (all `authRequired`, all
+re-verify the ctid belongs to the user like index.ts:169–174):
+```
+POST   /api/accounts/:ctid/orders                  { orderType, side, lots, price?, sl?, tp?, expiration? }
+PATCH  /api/accounts/:ctid/orders/:orderId         { price?, sl?, tp? }   (omit/null = keep)
+POST   /api/accounts/:ctid/orders/:orderId/cancel
+POST   /api/accounts/:ctid/positions/:positionId/close
+PATCH  /api/accounts/:ctid/positions/:positionId   { sl?, tp? }
+```
+Validation (server-authoritative; mirror doochy but REJECT, don't silently
+drop): BUY `SL < entry < TP`, SELL `TP < entry < SL`; volume snapped to the
+symbol grid (`minVolume`/`stepVolume`/`maxVolume` — extend the `reads.ts` spec
+cache which currently lacks these); price rounded to symbol `digits`; only
+entry (`LIMIT`/`STOP`) orders are cancellable/amendable. At-most-once per-account
+op latch so a double-click can't double-submit; errors surfaced as
+`errorCode + description`.
+
+### Frontend
+- New-order panel akin to doochy `Trade.tsx` (symbol picker, BUY/SELL,
+  MARKET/LIMIT/STOP, lots, SL, TP, confirm modal) in the dark theme; only for a
+  single selected account, disabled in Combined mode.
+- Row actions: Positions → Close / edit SL+TP; Orders → Cancel / edit level ±
+  SL/TP, with confirm modal / inline form.
+- After any write, trigger that account's reconcile so the table reflects broker
+  truth within the existing 8s poll (reconcile is already single-flight).
+- Optional: risk/reward preview like doochy `orderPreview` (orders.ts:534);
+  cheap in-memory audit log (last 20 order actions per user).
+
+### Verify
+Place MARKET/LIMIT/STOP + cancel each + close + both-side SL/TP amends on a
+demo account; wrong-side SL/TP rejected clearly; off-grid lots snapped; GTD
+expiry; double-submit guarded; restart mid-order still reconciles. All green
+through `pnpm typecheck` + `pnpm build`.
+
+## 11. Later roadmap (not this build)
 
 Deals/history (ProtoOADealListReq), equity graph, live quotes
 (ProtoOASubscribeSpotsReq — see `src/ctrader/livePrices.ts`), embedded cTrader
 `market-chart` widget (view-only embed works without a login; changing symbol =
 re-running `runPlugin` with a new route; it cannot overlay your own
-entries/SL/TP), manual order placement (copy execution calls in
-`src/ctrader/orders.ts`), encrypted-at-rest credentials.
+entries/SL/TP), encrypted-at-rest credentials.

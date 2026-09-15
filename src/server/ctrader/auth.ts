@@ -40,7 +40,7 @@ function mapAccounts(list: any[]): StoredAccount[] {
 }
 
 // Validate a user-entered credential set against the broker and discover every
-// account under the grant (demo and live together — the account-list call is
+// account under the grant (demo and live together - the account-list call is
 // made on the demo endpoint and answers for live accounts too). Returns the
 // discovered accounts plus any rotated tokens. Uses its own short-lived socket
 // so a failed validation leaves nothing half-open in the pool.

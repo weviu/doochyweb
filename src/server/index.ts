@@ -7,6 +7,7 @@ import { signToken, authRequired, AuthedRequest, hashPassword, verifyPassword, f
 import { userSockets } from "./ctrader/connection";
 import { discoverAccounts } from "./ctrader/auth";
 import { reconcileAccount, listAccounts } from "./ctrader/reads";
+import { amendPositionSLTP, cancelOrder, closePosition, modifyOrder, placeOrder, previewOrder, TicketInput } from "./ctrader/execute";
 
 const app = express();
 app.use(express.json({ limit: "100kb" }));
@@ -194,6 +195,169 @@ app.get("/api/accounts/:ctid/orders", authRequired, async (req: AuthedRequest, r
     }
     const result = await reconcileAccount(req.userId!, ctid, account.isLive);
     res.json({ orders: result.orders });
+  } catch (err: any) {
+    res.status(502).json({ error: err.message ?? "failed" });
+  }
+});
+
+// -----------------------------------------------------------------------
+// Order management (manual create / modify / close). All routes confirm the
+// ctid belongs to the signed-in user before reaching the broker.
+// -----------------------------------------------------------------------
+
+app.post("/api/accounts/:ctid/preview", authRequired, async (req: AuthedRequest, res: Response) => {
+  try {
+    const ctid = Number(req.params.ctid);
+    if (!Number.isFinite(ctid) || ctid <= 0) {
+      res.status(400).json({ error: "invalid account id" });
+      return;
+    }
+    const creds = await loadCredentials(req.userId!);
+    const account = creds?.accounts.find((a) => a.ctid === ctid);
+    if (!account) {
+      res.status(404).json({ error: "account not found" });
+      return;
+    }
+    const body = (req.body ?? {}) as TicketInput;
+    const result = await previewOrder(req.userId!, ctid, account.isLive, body);
+    if (!result.ok) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+    res.json({ preview: result.preview });
+  } catch (err: any) {
+    res.status(502).json({ error: err.message ?? "failed" });
+  }
+});
+
+app.post("/api/accounts/:ctid/orders", authRequired, async (req: AuthedRequest, res: Response) => {
+  try {
+    const ctid = Number(req.params.ctid);
+    if (!Number.isFinite(ctid) || ctid <= 0) {
+      res.status(400).json({ error: "invalid account id" });
+      return;
+    }
+    const creds = await loadCredentials(req.userId!);
+    const account = creds?.accounts.find((a) => a.ctid === ctid);
+    if (!account) {
+      res.status(404).json({ error: "account not found" });
+      return;
+    }
+    const result = await placeOrder(req.userId!, ctid, account.isLive, (req.body ?? {}) as TicketInput);
+    if (!result.ok) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+    res.json({ ok: true, note: result.note });
+  } catch (err: any) {
+    res.status(502).json({ error: err.message ?? "failed" });
+  }
+});
+
+app.patch("/api/accounts/:ctid/orders/:orderId", authRequired, async (req: AuthedRequest, res: Response) => {
+  try {
+    const ctid = Number(req.params.ctid);
+    const orderId = Number(req.params.orderId);
+    if (!Number.isFinite(ctid) || ctid <= 0 || !Number.isFinite(orderId) || orderId <= 0) {
+      res.status(400).json({ error: "invalid account or order id" });
+      return;
+    }
+    const creds = await loadCredentials(req.userId!);
+    const account = creds?.accounts.find((a) => a.ctid === ctid);
+    if (!account) {
+      res.status(404).json({ error: "account not found" });
+      return;
+    }
+    const body = (req.body ?? {}) as { price?: number | null; sl?: number | null; tp?: number | null };
+    const result = await modifyOrder(req.userId!, ctid, account.isLive, orderId, body);
+    if (!result.ok) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+    res.json({ ok: true, note: result.note });
+  } catch (err: any) {
+    res.status(502).json({ error: err.message ?? "failed" });
+  }
+});
+
+app.post("/api/accounts/:ctid/orders/:orderId/cancel", authRequired, async (req: AuthedRequest, res: Response) => {
+  try {
+    const ctid = Number(req.params.ctid);
+    const orderId = Number(req.params.orderId);
+    if (!Number.isFinite(ctid) || ctid <= 0 || !Number.isFinite(orderId) || orderId <= 0) {
+      res.status(400).json({ error: "invalid account or order id" });
+      return;
+    }
+    const creds = await loadCredentials(req.userId!);
+    const account = creds?.accounts.find((a) => a.ctid === ctid);
+    if (!account) {
+      res.status(404).json({ error: "account not found" });
+      return;
+    }
+    const result = await cancelOrder(req.userId!, ctid, account.isLive, orderId);
+    if (!result.ok) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+    res.json({ ok: true, note: result.note });
+  } catch (err: any) {
+    res.status(502).json({ error: err.message ?? "failed" });
+  }
+});
+
+app.post("/api/accounts/:ctid/positions/:positionId/close", authRequired, async (req: AuthedRequest, res: Response) => {
+  try {
+    const ctid = Number(req.params.ctid);
+    const positionId = Number(req.params.positionId);
+    if (!Number.isFinite(ctid) || ctid <= 0 || !Number.isFinite(positionId) || positionId <= 0) {
+      res.status(400).json({ error: "invalid account or position id" });
+      return;
+    }
+    const creds = await loadCredentials(req.userId!);
+    const account = creds?.accounts.find((a) => a.ctid === ctid);
+    if (!account) {
+      res.status(404).json({ error: "account not found" });
+      return;
+    }
+    const result = await closePosition(req.userId!, ctid, account.isLive, positionId);
+    if (!result.ok) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+    res.json({ ok: true, note: result.note });
+  } catch (err: any) {
+    res.status(502).json({ error: err.message ?? "failed" });
+  }
+});
+
+app.patch("/api/accounts/:ctid/positions/:positionId", authRequired, async (req: AuthedRequest, res: Response) => {
+  try {
+    const ctid = Number(req.params.ctid);
+    const positionId = Number(req.params.positionId);
+    if (!Number.isFinite(ctid) || ctid <= 0 || !Number.isFinite(positionId) || positionId <= 0) {
+      res.status(400).json({ error: "invalid account or position id" });
+      return;
+    }
+    const creds = await loadCredentials(req.userId!);
+    const account = creds?.accounts.find((a) => a.ctid === ctid);
+    if (!account) {
+      res.status(404).json({ error: "account not found" });
+      return;
+    }
+    const { sl, tp } = (req.body ?? {}) as { sl?: number | null; tp?: number | null };
+    const result = await amendPositionSLTP(
+      req.userId!,
+      ctid,
+      account.isLive,
+      positionId,
+      sl != null && Number(sl) > 0 ? Number(sl) : null,
+      tp != null && Number(tp) > 0 ? Number(tp) : null
+    );
+    if (!result.ok) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+    res.json({ ok: true, note: result.note });
   } catch (err: any) {
     res.status(502).json({ error: err.message ?? "failed" });
   }

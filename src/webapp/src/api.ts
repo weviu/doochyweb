@@ -32,7 +32,7 @@ async function request<T>(path: string, opts: { method?: string; body?: unknown;
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
     });
   } catch {
-    throw new ApiError("Network error — is the server running?", 0);
+    throw new ApiError("Network error - is the server running?", 0);
   }
 
   let data: any = null;
@@ -103,6 +103,37 @@ export interface ConnectInput {
   refreshToken: string;
 }
 
+export type Side = "BUY" | "SELL";
+export type OrderKind = "MARKET" | "LIMIT" | "STOP";
+
+export interface TicketInput {
+  symbol: string;
+  side: Side;
+  orderType: OrderKind;
+  lots: number;
+  price?: number | null;
+  sl?: number | null;
+  tp?: number | null;
+}
+
+export interface OrderPreview {
+  symbol: string;
+  snapped: boolean;
+  lots: number;
+  minLots: number | null;
+  lotStep: number | null;
+  entryRef: number | null;
+  riskUSD: number | null;
+  rewardUSD: number | null;
+  rr: number | null;
+  warnings: string[];
+}
+
+export interface WriteResult {
+  ok: boolean;
+  note?: string;
+}
+
 export const api = {
   register: (username: string, password: string) =>
     request<{ token: string }>("/api/auth/register", { method: "POST", body: { username, password } }),
@@ -128,4 +159,28 @@ export const api = {
       body: { nickname },
       token,
     }),
+
+  // ---- manual order management (phase 2) ----
+
+  previewOrder: (ctid: number, input: TicketInput) =>
+    request<{ preview: OrderPreview }>(`/api/accounts/${ctid}/preview`, { method: "POST", body: input }),
+
+  placeOrder: (ctid: number, input: TicketInput) =>
+    request<WriteResult>(`/api/accounts/${ctid}/orders`, { method: "POST", body: input }),
+
+  modifyOrder: (
+    ctid: number,
+    orderId: number,
+    changes: { price?: number | null; sl?: number | null; tp?: number | null }
+  ) =>
+    request<WriteResult>(`/api/accounts/${ctid}/orders/${orderId}`, { method: "PATCH", body: changes }),
+
+  cancelOrder: (ctid: number, orderId: number) =>
+    request<WriteResult>(`/api/accounts/${ctid}/orders/${orderId}/cancel`, { method: "POST" }),
+
+  closePosition: (ctid: number, positionId: number) =>
+    request<WriteResult>(`/api/accounts/${ctid}/positions/${positionId}/close`, { method: "POST" }),
+
+  amendPosition: (ctid: number, positionId: number, sl?: number | null, tp?: number | null) =>
+    request<WriteResult>(`/api/accounts/${ctid}/positions/${positionId}`, { method: "PATCH", body: { sl, tp } }),
 };

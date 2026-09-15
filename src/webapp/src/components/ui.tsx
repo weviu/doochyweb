@@ -1,0 +1,333 @@
+import { Check, ChevronDown, Loader2 } from "lucide-react";
+import { useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
+
+// Shared "Dark Notion" primitives, ported from the doochy webapp so both UIs
+// share the same feel: hairlines over heavy borders, background-step hover
+// (never scale/lift), one restrained accent, 200ms transitions, and a >=400ms
+// loading floor on every async button so fast round-trips never flicker.
+
+type Variant = "primary" | "secondary" | "ghost" | "danger";
+type Size = "sm" | "md" | "lg";
+
+const base =
+  "inline-flex items-center justify-center gap-2 rounded-md font-medium transition " +
+  "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-1 " +
+  "focus-visible:ring-offset-canvas disabled:opacity-50 disabled:pointer-events-none select-none";
+
+const variants: Record<Variant, string> = {
+  primary: "bg-accent text-accent-fg hover:bg-accent-hover",
+  secondary: "bg-surface border border-hairline text-fg hover:bg-surface-hover hover:border-hairline-strong",
+  ghost: "text-fg-muted hover:bg-surface-hover hover:text-fg",
+  danger: "text-danger hover:bg-danger-soft",
+};
+
+const sizes: Record<Size, string> = {
+  sm: "h-8 px-3 text-xs",
+  md: "h-9 px-4 text-sm",
+  lg: "h-11 px-5 text-sm",
+};
+
+interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: Variant;
+  size?: Size;
+  // When set, the button shows a spinner + disabled state for >=400ms so a fast
+  // async action never flickers.
+  onClickAsync?: () => Promise<void>;
+  // A leading icon rendered in a single fixed slot that becomes the spinner
+  // while loading (so the button never grows a second icon / changes width).
+  // Prefer this over putting an icon in children when the button can be busy.
+  icon?: ReactNode;
+}
+
+export function Button({
+  variant = "secondary",
+  size = "md",
+  onClickAsync,
+  onClick,
+  className = "",
+  children,
+  disabled,
+  icon,
+  ...rest
+}: ButtonProps) {
+  const [loading, setLoading] = useState(false);
+
+  async function handle(e: React.MouseEvent<HTMLButtonElement>) {
+    if (onClickAsync) {
+      setLoading(true);
+      const started = Date.now();
+      try {
+        await onClickAsync();
+      } finally {
+        const elapsed = Date.now() - started;
+        if (elapsed < 400) await new Promise((r) => setTimeout(r, 400 - elapsed));
+        setLoading(false);
+      }
+    } else {
+      onClick?.(e);
+    }
+  }
+
+  return (
+    <button
+      className={`${base} ${variants[variant]} ${sizes[size]} ${className}`}
+      onClick={handle}
+      disabled={disabled || loading}
+      {...rest}
+    >
+      {icon !== undefined
+        ? (loading ? <Loader2 className="h-4 w-4 animate-spin" /> : icon)
+        : loading && <Loader2 className="h-4 w-4 animate-spin" />}
+      {children}
+    </button>
+  );
+}
+
+export function Card({
+  children,
+  className = "",
+  interactive = false,
+  flat = false,
+}: {
+  children: ReactNode;
+  className?: string;
+  interactive?: boolean;
+  // Omit the box-shadow. Use for cards that reposition during an animation
+  // (accordions/collapses): an outset shadow repaints on every frame a card
+  // moves, which stutters. The hairline border alone delineates the card here.
+  flat?: boolean;
+}) {
+  return (
+    <div
+      className={
+        "rounded-lg border border-hairline bg-surface " +
+        (flat ? "" : "shadow-card ") +
+        (interactive ? "transition hover:bg-surface-hover hover:border-hairline-strong cursor-pointer " : "") +
+        className
+      }
+    >
+      {children}
+    </div>
+  );
+}
+
+export function Skeleton({ className = "" }: { className?: string }) {
+  return <div className={`animate-pulse rounded-md bg-surface-hover ${className}`} />;
+}
+
+export function Badge({
+  children,
+  tone = "muted",
+}: {
+  children: ReactNode;
+  tone?: "muted" | "success" | "danger" | "accent";
+}) {
+  const tones: Record<string, string> = {
+    muted: "border-hairline bg-surface text-fg-muted",
+    success: "border-success/30 bg-success-soft text-success",
+    danger: "border-danger/30 bg-danger-soft text-danger",
+    accent: "border-accent/20 bg-accent-soft text-accent",
+  };
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium ${tones[tone]}`}>
+      {children}
+    </span>
+  );
+}
+
+// Shared input styling for every text/number field in the app.
+export const inputCls =
+  "w-full rounded-md border border-hairline bg-surface px-3 py-2 text-sm text-fg " +
+  "placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40 " +
+  "disabled:opacity-50 disabled:pointer-events-none";
+
+// Combined-mode row identity: which account a position/order came from. Shows
+// the nickname when one is set; un-nicknamed accounts get the login number plus
+// a LIVE/DEMO tag so the row's environment is never ambiguous.
+export function AccountChip({
+  login,
+  nickname,
+  isLive,
+}: {
+  login: number;
+  nickname: string | null;
+  isLive: boolean;
+}) {
+  return (
+    <Badge tone={isLive ? "accent" : "muted"}>
+      {nickname ?? login}
+      {isLive ? " · LIVE" : " · DEMO"}
+    </Badge>
+  );
+}
+
+// A labelled value pair used inside cards (label up top, value below).
+export function Field({
+  label,
+  value,
+  valueClassName,
+}: {
+  label: string;
+  value: string;
+  valueClassName?: string;
+}) {
+  return (
+    <div>
+      <div className="text-xs text-fg-faint">{label}</div>
+      <div className={`mt-0.5 text-sm tabular-nums ${valueClassName ?? "text-fg"}`}>{value}</div>
+    </div>
+  );
+}
+
+// A labelled metric used in the order-ticket risk preview.
+export function Metric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: "success" | "danger";
+}) {
+  const color = tone === "success" ? "text-success" : tone === "danger" ? "text-danger" : "text-fg";
+  return (
+    <div>
+      <div className="text-xs text-fg-faint">{label}</div>
+      <div className={`mt-0.5 text-sm font-semibold tabular-nums ${color}`}>{value}</div>
+    </div>
+  );
+}
+
+// A compact numeric input with an optional right-hand suffix (lots, $).
+export function BareInput({
+  value,
+  onChange,
+  placeholder,
+  suffix,
+  className = "",
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  suffix?: string;
+  className?: string;
+}) {
+  return (
+    <div className="relative">
+      <input
+        type="number"
+        inputMode="decimal"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className={`${inputCls} tabular-nums ${suffix ? "pr-10" : ""} ${className}`}
+      />
+      {suffix && (
+        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-fg-faint">
+          {suffix}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// A selectable/removable symbol or filter chip.
+export function Chip({
+  children,
+  onRemove,
+}: {
+  children: ReactNode;
+  onRemove?: () => void;
+}) {
+  if (!onRemove) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-md border border-hairline bg-surface px-2 py-1 text-xs font-medium text-fg-muted">
+        {children}
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      onClick={onRemove}
+      className="inline-flex items-center gap-1 rounded-md border border-hairline bg-surface px-2 py-1 text-xs font-medium text-fg-muted transition hover:border-danger/40 hover:text-danger"
+    >
+      {children}
+      <span className="text-fg-faint">×</span>
+    </button>
+  );
+}
+
+// A save-state flash: brief success/error tint, auto-shown alongside results.
+export function Flash({ tone, children }: { tone: "success" | "danger"; children: ReactNode }) {
+  const cls =
+    tone === "success"
+      ? "border-success/30 bg-success-soft text-success"
+      : "border-danger/30 bg-danger-soft text-danger";
+  return (
+    <div className={`flex items-start gap-2 rounded-md border px-3 py-2 text-xs ${cls}`}>
+      {tone === "success" && <Check className="mt-0.5 h-3.5 w-3.5 shrink-0" />}
+      <span className="min-w-0">{children}</span>
+    </div>
+  );
+}
+
+export function Chevron({ open, className = "" }: { open: boolean; className?: string }) {
+  return (
+    <ChevronDown
+      className={`h-4 w-4 shrink-0 text-fg-muted transition duration-300 ${open ? "rotate-180" : ""} ${className}`}
+    />
+  );
+}
+
+// A height collapse animated by interpolating a CSS grid row (0fr -> 1fr) plus
+// an opacity fade. Both are compositor-friendly; the child stays mounted while
+// collapsed, so no remount cost on toggle. The global prefers-reduced-motion
+// rule shortens the transition to ~instant.
+export function Collapse({ open, children }: { open: boolean; children: ReactNode }) {
+  return (
+    <div
+      className="grid transition-[grid-template-rows] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+      style={{ gridTemplateRows: open ? "1fr" : "0fr" }}
+    >
+      <div className={"overflow-hidden transition-opacity duration-300 " + (open ? "opacity-100" : "opacity-0")}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// A boolean setting rendered as a switch. The whole row is the hit target; the
+// async commit shows a small spinner in place of the knob transition.
+export function Toggle({
+  label,
+  checked,
+  onToggle,
+}: {
+  label: string;
+  checked: boolean;
+  onToggle: (next: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(!checked)}
+      className="flex items-center gap-2 text-left select-none"
+    >
+      <span
+        className={
+          "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition " +
+          (checked ? "bg-accent" : "bg-surface-active")
+        }
+      >
+        <span
+          className={
+            "inline-flex h-4 w-4 items-center justify-center rounded-full bg-white transition " +
+            (checked ? "translate-x-4" : "translate-x-0.5")
+          }
+        />
+      </span>
+      <span className="text-xs font-medium text-fg-muted">{label}</span>
+    </button>
+  );
+}

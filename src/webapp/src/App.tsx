@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api, getToken, setToken } from "./api";
 import Login from "./Login";
 import Dashboard from "./Dashboard";
+import { Skeleton } from "./components/ui";
 
 export default function App() {
   const [token, setTokenState] = useState<string | null>(() => getToken());
@@ -58,5 +59,12 @@ function BootstrapGate({
       .then(onValid)
       .catch(onInvalid);
   });
-  return <div className="loading-screen">Loading…</div>;
+  return (
+    <div className="flex min-h-screen items-center justify-center p-6">
+      <div className="w-full max-w-sm space-y-3">
+        <Skeleton className="h-32 w-full" />
+        <Skeleton className="h-10 w-full" />
+      </div>
+    </div>
+  );
 }

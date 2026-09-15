@@ -66,7 +66,7 @@ function timeoutError(message: string): Promise<never> {
 // One broker socket for one environment, authenticated at the app level. Sends
 // are serialized through a promise queue so concurrent sends never interleave a
 // half-encoded frame. Heartbeats every 10s to keep the push channel alive.
-class Channel {
+export class Channel {
   readonly env: CtraderEnv;
   private conn: CTraderConnection | null = null;
   private queue: Promise<unknown> = Promise.resolve();
@@ -122,13 +122,33 @@ class Channel {
     this.heartbeat.unref?.();
   }
 
-  send(name: string, data?: any): Promise<any> {
+  send(name: string, data?: any, clientMsgId?: string): Promise<any> {
     const conn = this.conn;
     if (!conn || this.closedFlag) return Promise.reject(new Error("cTrader channel not open"));
     this.lastUsedAt = Date.now();
-    const run = this.queue.then(() => conn.sendCommand(name, data));
+    const run = this.queue.then(() => conn.sendCommand(name, data, clientMsgId));
     this.queue = run.catch(() => {});
     return run;
+  }
+
+  // Event-driven ops (orders/amends) have no synchronous response: success and
+  // failure arrive as push events on the socket. Expose the raw emitter so
+  // callers can correlate outcomes; `on` returns the listener id `off` removes.
+  on(name: string, cb: (event: any) => any): string {
+    try {
+      const id = this.conn?.on(name, cb) as unknown;
+      return typeof id === "string" ? id : "";
+    } catch {
+      return "";
+    }
+  }
+
+  off(id: string): void {
+    try {
+      this.conn?.removeEventListener(id);
+    } catch {
+      /* ignore */
+    }
   }
 
   // Keep the newest bid/ask per symbolId. Spot events only carry whichever side
@@ -236,6 +256,15 @@ export class UserSockets {
     return ch?.healthy ? ch : null;
   }
 
+  // Open (or reuse) the env socket with the account authenticated, returning the
+  // channel. Order placement registers event listeners and sends through this
+  // exact channel, so token rotation (which swaps the Channel object) is handled
+  // by the caller via the send() retry path.
+  async channelForAccount(env: CtraderEnv, ctid: number): Promise<Channel> {
+    await this.ensureAccountAuthed(env, ctid);
+    return this.channel(env);
+  }
+
   // Make the broker stream spots for the given symbolIds on this user's env
   // socket. Idempotent; safe to call on every poll.
   async ensureSpots(env: CtraderEnv, ctid: number, symbolIds: number[]): Promise<void> {
@@ -276,17 +305,19 @@ export class UserSockets {
   // Send on an environment's socket. If the broker rejects with a token error,
   // rotate the tokens (closing both sockets), then retry once on a fresh
   // channel. Account-scoped requests re-auth the account post-rotation.
-  async send(env: CtraderEnv, name: string, data?: any, opts?: { ctid?: number }): Promise<any> {
+  // clientMsgId is echoed back by ProtoOAOrderErrorEvent, so amends/places that
+  // correlate by message id pass it here.
+  async send(env: CtraderEnv, name: string, data?: any, opts?: { ctid?: number; clientMsgId?: string }): Promise<any> {
     try {
       if (opts?.ctid != null) await this.ensureAccountAuthed(env, opts.ctid);
       const ch = await this.channel(env);
-      return await ch.send(name, data);
+      return await ch.send(name, data, opts?.clientMsgId);
     } catch (err: any) {
       if (!isTokenError(err)) throw err;
       await this.rotateTokens();
       if (opts?.ctid != null) await this.ensureAccountAuthed(env, opts.ctid);
       const ch = await this.channel(env);
-      return await ch.send(name, data);
+      return await ch.send(name, data, opts?.clientMsgId);
     }
   }
 

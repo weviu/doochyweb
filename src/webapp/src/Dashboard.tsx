@@ -1,12 +1,22 @@
 import { useEffect, useState } from "react";
-import { api, AccountView, ConnectInput, RowAccount } from "./api";
+import { ChevronDown, LogOut, RefreshCw, Settings } from "lucide-react";
+import { api, AccountView, ConnectInput } from "./api";
 import ConnectPanel from "./ConnectPanel";
 import SettingsPage from "./Settings";
 import PositionsTab from "./PositionsTab";
 import OrdersTab from "./OrdersTab";
+import { Button, Card, Toggle } from "./components/ui";
+import { FadeRise } from "./components/motion";
 
 export type ViewMode = "separate" | "combined";
 const MODE_KEY = "doochyweb_mode";
+
+const PAGES = [
+  { key: "positions", label: "Positions" },
+  { key: "orders", label: "Pending orders" },
+] as const;
+
+type PageKey = (typeof PAGES)[number]["key"];
 
 export default function Dashboard({ onLogout }: { onLogout: () => void }) {
   const [accounts, setAccounts] = useState<AccountView[]>([]);
@@ -69,7 +79,14 @@ export default function Dashboard({ onLogout }: { onLogout: () => void }) {
   const liveAccounts = accounts.filter((a) => a.isLive);
 
   if (hasCredentials === null) {
-    return <div className="loading-screen">Loading…</div>;
+    return (
+      <div className="flex min-h-screen items-center justify-center p-6">
+        <div className="w-full max-w-sm space-y-3">
+          <div className="h-32 w-full animate-pulse rounded-lg bg-surface-hover" />
+          <div className="h-10 w-full animate-pulse rounded-lg bg-surface-hover" />
+        </div>
+      </div>
+    );
   }
 
   if (showSettings) {
@@ -97,90 +114,92 @@ export default function Dashboard({ onLogout }: { onLogout: () => void }) {
   }
 
   return (
-    <div className="dashboard">
-      <header className="topbar">
-        <div className="brand">DoochyWeb</div>
-        <div className="topbar-actions">
-          <button className="ghost" onClick={refreshBalances} disabled={balanceLoading}>
-            {balanceLoading ? "…" : "Refresh balances"}
-          </button>
-          <button
-            className="ghost gear-btn"
-            aria-label="Settings"
-            title="Settings"
-            onClick={() => setShowSettings(true)}
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.6"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82h0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
-          </button>
-          <button className="ghost" onClick={onLogout}>
-            Sign out
-          </button>
+    <div className="min-h-screen bg-canvas">
+      <header className="sticky top-0 z-10 border-b border-hairline bg-canvas">
+        <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
+          <div className="text-base font-semibold tracking-tight">DoochyWeb</div>
+          <div className="flex items-center gap-1">
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<RefreshCw className="h-4 w-4" />}
+              onClickAsync={refreshBalances}
+              aria-label="Refresh balances"
+              title="Refresh balances"
+            />
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={<Settings className="h-4 w-4" />}
+              onClick={() => setShowSettings(true)}
+              aria-label="Settings"
+              title="Settings"
+            />
+            <Button size="sm" variant="ghost" icon={<LogOut className="h-4 w-4" />} onClick={onLogout} aria-label="Sign out" title="Sign out">
+              Sign out
+            </Button>
+          </div>
         </div>
       </header>
 
-      <section className="account-bar">
-        <label htmlFor="account-select">Account</label>
-        <select
-          id="account-select"
-          value={mode === "combined" ? "" : selectedCtid ?? ""}
-          disabled={mode === "combined"}
-          onChange={(e) => setSelectedCtid(Number(e.target.value))}
-        >
-          {mode === "combined" && <option value="">All accounts</option>}
-          <optgroup label="Live">
-            {liveAccounts.map((a) => (
-              <option key={a.ctid} value={a.ctid}>
-                {a.login} · {a.broker}
-                {a.balance != null ? ` · ${fmtMoney(a.balance)} ${a.currency ?? ""}` : ""}
-              </option>
-            ))}
-          </optgroup>
-          <optgroup label="Demo">
-            {demoAccounts.map((a) => (
-              <option key={a.ctid} value={a.ctid}>
-                {a.login} · {a.broker}
-                {a.balance != null ? ` · ${fmtMoney(a.balance)} ${a.currency ?? ""}` : ""}
-              </option>
-            ))}
-          </optgroup>
-          {accounts.length === 0 && <option value="">No accounts</option>}
-        </select>
-        <label className="mode-toggle" title="Show all accounts together">
-          <span className="mode-toggle-label">Combined</span>
-          <input
-            className="mode-toggle-input"
-            type="checkbox"
-            checked={mode === "combined"}
-            onChange={(e) => switchMode(e.target.checked ? "combined" : "separate")}
-          />
-          <span className="mode-toggle-track" aria-hidden="true">
-            <span className="mode-toggle-thumb" />
-          </span>
-        </label>
-      </section>
+      <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
+        <FadeRise>
+          <div className="space-y-6">
+            <Card className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="flex flex-1 flex-wrap items-center gap-x-3 gap-y-2">
+                  <span className="text-sm font-medium text-fg-muted">Account</span>
+                  <div className="relative min-w-0 flex-1">
+                    <select
+                      id="account-select"
+                      value={mode === "combined" ? "" : selectedCtid ?? ""}
+                      disabled={mode === "combined"}
+                      onChange={(e) => setSelectedCtid(Number(e.target.value))}
+                      className="w-full appearance-none rounded-md border border-hairline bg-surface py-2 pl-3 pr-8 text-sm font-medium text-fg focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-50"
+                    >
+                      {mode === "combined" && <option value="">All accounts</option>}
+                      {liveAccounts.length > 0 && (
+                        <option value="__live" disabled>
+                          Live
+                        </option>
+                      )}
+                      {liveAccounts.map((a) => (
+                        <option key={a.ctid} value={a.ctid}>
+                          {a.login} · {a.broker}
+                          {a.balance != null ? ` · ${fmtMoney(a.balance)} ${a.currency ?? ""}` : ""}
+                        </option>
+                      ))}
+                      {demoAccounts.length > 0 && (
+                        <option value="__demo" disabled>
+                          Demo
+                        </option>
+                      )}
+                      {demoAccounts.map((a) => (
+                        <option key={a.ctid} value={a.ctid}>
+                          {a.login} · {a.broker}
+                          {a.balance != null ? ` · ${fmtMoney(a.balance)} ${a.currency ?? ""}` : ""}
+                        </option>
+                      ))}
+                      {accounts.length === 0 && <option value="">No accounts</option>}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-muted" />
+                  </div>
+                </div>
+                <Toggle label="Combined" checked={mode === "combined"} onToggle={(c) => switchMode(c ? "combined" : "separate")} />
+              </div>
+            </Card>
 
-      {(mode === "combined" && accounts.length > 0) || selected ? (
-        <main className="tabs">
-          <Tabs mode={mode} accounts={accounts} ctid={selected?.ctid ?? null} isLive={selected?.isLive ?? false} />
-        </main>
-      ) : (
-        <div className="empty-state">
-          No cTrader accounts found. Check your credentials.
-        </div>
-      )}
+            {(mode === "combined" && accounts.length > 0) || selected ? (
+              <Tabs mode={mode} accounts={accounts} ctid={selected?.ctid ?? null} isLive={selected?.isLive ?? false} />
+            ) : (
+              <Card className="p-8 text-center">
+                <div className="text-sm text-fg-muted">No cTrader accounts found.</div>
+                <div className="mt-1 text-xs text-fg-faint">Check your credentials.</div>
+              </Card>
+            )}
+          </div>
+        </FadeRise>
+      </main>
     </div>
   );
 }
@@ -196,46 +215,41 @@ function Tabs({
   ctid: number | null;
   isLive: boolean;
 }) {
-  const [tab, setTab] = useState<"positions" | "orders">("positions");
+  const [tab, setTab] = useState<PageKey>("positions");
   return (
-    <>
-      <div className="tabbar">
-        <button className={tab === "positions" ? "tab active" : "tab"} onClick={() => setTab("positions")}>
-          Positions
-        </button>
-        <button className={tab === "orders" ? "tab active" : "tab"} onClick={() => setTab("orders")}>
-          Pending Orders
-        </button>
+    <div className="space-y-5">
+      <div className="flex gap-1">
+        {PAGES.map((p) => (
+          <button
+            key={p.key}
+            onClick={() => setTab(p.key)}
+            className={
+              "rounded-md px-3 py-1.5 text-sm font-medium capitalize transition " +
+              (tab === p.key
+                ? "border border-accent/20 bg-accent-soft text-accent"
+                : "border border-transparent text-fg-muted hover:bg-surface-hover hover:text-fg")
+            }
+          >
+            {p.label}
+          </button>
+        ))}
       </div>
       {tab === "positions" ? (
         <PositionsTab mode={mode} accounts={accounts} ctid={ctid} isLive={isLive} />
       ) : (
         <OrdersTab mode={mode} accounts={accounts} ctid={ctid} isLive={isLive} />
       )}
-    </>
-  );
-}
-
-// Combined-mode row identity: which account a position/order came from. Shows
-// the nickname when one is set; un-nicknamed accounts get the login number plus
-// a LIVE/DEMO tag so the row's environment is never ambiguous.
-export function AccountCell(acct: RowAccount) {
-  const unnamed = !acct.nickname;
-  return (
-    <td className="acct-cell">
-      <span className="mono">{unnamed ? acct.login : acct.nickname}</span>
-      {unnamed && <span className={`env-tag ${acct.isLive ? "env-live" : "env-demo"}`}>{acct.isLive ? "LIVE" : "DEMO"}</span>}
-    </td>
+    </div>
   );
 }
 
 export function fmtMoney(n: number | null | undefined): string {
-  if (n == null || Number.isNaN(n)) return "—";
+  if (n == null || Number.isNaN(n)) return "-";
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 export function fmtPrice(n: number | null | undefined, digits?: number): string {
-  if (n == null || Number.isNaN(n)) return "—";
+  if (n == null || Number.isNaN(n)) return "-";
   // Scale decimals to the magnitude of the price so big values don't show
   // long trailing zeros (e.g. 75,000.000), while tiny ones keep precision.
   const cap = n >= 1_000 ? 2 : n >= 100 ? 3 : 4;
@@ -247,11 +261,16 @@ export function fmtPrice(n: number | null | undefined, digits?: number): string 
 }
 
 export function fmtLots(n: number | null | undefined): string {
-  if (n == null || Number.isNaN(n)) return "—";
+  if (n == null || Number.isNaN(n)) return "-";
   return n.toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 
 export function fmtTime(ts: number | null): string {
-  if (!ts) return "—";
-  return new Date(ts).toLocaleString();
+  if (!ts) return "-";
+  return new Date(ts).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }

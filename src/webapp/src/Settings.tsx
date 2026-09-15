@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
+import { AlertCircle, ArrowLeft, KeyRound, Save } from "lucide-react";
 import { api, ApiError, AccountView, ConnectInput } from "./api";
 import ConnectPanel from "./ConnectPanel";
 import { fmtMoney } from "./Dashboard";
+import { Button, Card, inputCls } from "./components/ui";
+import { FadeRise } from "./components/motion";
 
 export default function SettingsPage({
   accounts,
@@ -55,81 +58,117 @@ export default function SettingsPage({
   }
 
   return (
-    <div className="dashboard">
-      <header className="topbar">
-        <div className="brand">DoochyWeb</div>
-        <div className="topbar-actions">
-          <button className="ghost" onClick={onClose}>
-            Done
-          </button>
+    <div className="min-h-screen bg-canvas text-fg">
+      <header className="sticky top-0 z-20 border-b border-hairline bg-canvas/85 backdrop-blur">
+        <div className="mx-auto flex h-14 max-w-4xl items-center gap-1 px-4">
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<ArrowLeft className="h-4 w-4" />}
+            onClick={onClose}
+            aria-label="Back"
+          />
+          <div className="flex items-center gap-2">
+            <div className="text-[15px] font-semibold tracking-tight text-fg">DoochyWeb</div>
+            <span className="mt-0.5 rounded bg-surface px-1 py-px text-[11px] font-medium text-fg-faint">settings</span>
+          </div>
         </div>
       </header>
 
-      <main className="settings-body">
-        <section className="settings-panel">
-          <h1 className="settings-title">Settings</h1>
+      <main className="mx-auto max-w-4xl space-y-4 px-4 py-6">
+        <FadeRise>
+          <div className="space-y-1">
+            <h1 className="text-lg font-semibold tracking-tight text-fg">Settings</h1>
+            <p className="text-sm text-fg-muted">Manage how accounts appear and how DoochyWeb connects.</p>
+          </div>
+        </FadeRise>
 
-          <h2 className="settings-subtitle">Account nicknames</h2>
-          <p className="settings-helper">
-            Nicknames live on your side only; they are never sent to cTrader.
-            Each account can have its own name so you can tell them apart in
-            the account list.
-          </p>
-          {saveError && <div className="error-banner">{saveError}</div>}
+        {saveError && (
+          <Card className="border-danger/30 bg-danger-soft p-4">
+            <div className="flex items-center gap-2 text-sm text-danger">
+              <AlertCircle className="h-4 w-4 shrink-0" /> {saveError}
+            </div>
+          </Card>
+        )}
 
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Account</th>
-                <th>Nickname</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {accounts.map((a) => (
-                <tr key={a.ctid}>
-                  <td className="mono">
-                    {a.login} · {a.broker}
-                    {a.balance != null
-                      ? ` · ${fmtMoney(a.balance)} ${a.currency ?? ""}`
-                      : ""}
-                  </td>
-                  <td>
-                    <input
-                      className="nickname-input"
-                      value={drafts[a.ctid] ?? ""}
-                      maxLength={40}
-                      placeholder="e.g. Main"
-                      onChange={(e) =>
-                        setDrafts((d) => ({ ...d, [a.ctid]: e.target.value }))
-                      }
-                    />
-                  </td>
-                  <td className="num">
-                    <button
-                      className="ghost small"
-                      onClick={() => saveNickname(a.ctid)}
-                      disabled={saving === a.ctid}
+        <FadeRise>
+          <Card className="p-4">
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold tracking-tight text-fg">Account nicknames</h2>
+              <p className="text-sm text-fg-muted">
+                Nicknames live on your side only; they are never sent to cTrader. Each account can have its own name so
+                you can tell them apart in the account list and on positions and orders.
+              </p>
+            </div>
+            <div className="mt-3 divide-y divide-hairline">
+              {accounts.map((a) => {
+                const draft = drafts[a.ctid] ?? "";
+                const dirty = draft !== (a.nickname ?? "");
+                return (
+                  <div key={a.ctid} className="flex items-center gap-3 py-4">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${
+                            a.isLive
+                              ? "bg-accent-soft text-accent"
+                              : "bg-surface-active text-fg-muted"
+                          }`}
+                        >
+                          {a.isLive ? "LIVE" : "DEMO"}
+                        </span>
+                        <span className="truncate text-sm font-medium tabular-nums text-fg">{a.login}</span>
+                        <span className="truncate text-xs text-fg-faint">{a.broker}</span>
+                      </div>
+                      <div className="mt-0.5 text-xs tabular-nums text-fg-muted">
+                        {a.balance != null ? `${fmtMoney(a.balance)} ${a.currency ?? ""}` : "- balance"}
+                      </div>
+                    </div>
+                    <div className="w-44 shrink-0">
+                      <input
+                        className={inputCls}
+                        value={draft}
+                        maxLength={40}
+                        placeholder="e.g. Main"
+                        onChange={(e) => setDrafts((d) => ({ ...d, [a.ctid]: e.target.value }))}
+                      />
+                    </div>
+                    <Button
+                      size="sm"
+                      className="shrink-0"
+                      variant={dirty ? "primary" : "secondary"}
+                      icon={<Save className="h-3.5 w-3.5" />}
+                      disabled={!dirty}
+                      onClickAsync={dirty ? () => saveNickname(a.ctid) : undefined}
                     >
                       {saving === a.ctid ? "Saving…" : "Save"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        </FadeRise>
 
-        <section className="settings-panel">
-          <h2 className="settings-subtitle">Credentials</h2>
-          <p className="settings-helper">
-            Manage the cTrader OpenAPI credentials used to fetch balances,
-            positions and orders.
-          </p>
-          <button className="ghost" onClick={() => setShowConnect(true)}>
-            Update credentials
-          </button>
-        </section>
+        <FadeRise>
+          <Card className="p-4">
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold tracking-tight text-fg">Credentials</h2>
+              <p className="text-sm text-fg-muted">
+                Manage the cTrader OpenAPI credentials used to fetch balances, positions and orders.
+              </p>
+            </div>
+            <div className="mt-3">
+              <Button variant="secondary" icon={<KeyRound className="h-4 w-4" />} onClick={() => setShowConnect(true)}>
+                Update credentials
+              </Button>
+            </div>
+            <p className="mt-3 text-xs leading-relaxed text-fg-faint">
+              The server keeps a live-token version of these credentials inside ~/.doochyweb. Reconnecting renews it;
+              there is nothing else to manage here.
+            </p>
+          </Card>
+        </FadeRise>
       </main>
     </div>
   );

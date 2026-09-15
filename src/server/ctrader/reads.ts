@@ -1,23 +1,27 @@
 import { userSockets, CtraderEnv, SpotQuote } from "./connection";
 import { loadCredentials, StoredAccount } from "../db";
+import { resolveLevel } from "./levels";
 
 interface SymbolSpec {
   name: string;
   lotSize: number;  // volume units per 1.0 lot
   digits: number;   // decimal places for display
+  minVolume: number;  // smallest tradable volume (cents)
+  stepVolume: number; // volume grid step (cents)
+  maxVolume: number;  // largest tradable volume (cents)
   quoteAsset: string | null; // quote currency name ("USD", "EUR", ...)
 }
 
 // Per-account symbol metadata. Two broker calls populate it once (cached and
 // static per account): the symbols LIST carries the display name (symbolName)
 // and quote asset id but NOT contract details, while symbolById carries
-// lotSize/digits but NO name — so both are needed and merged per symbolId.
+// lotSize/digits but NO name - so both are needed and merged per symbolId.
 interface SymbolMeta {
   nameById: Map<number, string>;
   nameToId: Map<string, number>;
   quoteById: Map<number, number>;
   assetNameById: Map<number, string>;
-  specById: Map<number, { lotSize: number; digits: number }>;
+  specById: Map<number, { lotSize: number; digits: number; minVolume: number; stepVolume: number; maxVolume: number }>;
 }
 
 const symbolMetaCache = new Map<string, SymbolMeta>();
@@ -60,8 +64,9 @@ async function symbolMeta(userId: string, env: CtraderEnv, ctid: number): Promis
   return meta;
 }
 
-// Fetch missing symbol specs (lotSize/digits) for the given IDs, using the
-// per-account cache and falling back to broker requests only for IDs not yet seen.
+// Fetch missing symbol specs (lotSize/digits/volume grid) for the given IDs,
+// using the per-account cache and falling back to broker requests only for IDs
+// not yet seen.
 async function ensureSpecs(userId: string, env: CtraderEnv, ctid: number, meta: SymbolMeta, symbolIds: number[]): Promise<void> {
   const missing = [...new Set(symbolIds.filter((id) => id && !meta.specById.has(id)))];
   if (!missing.length) return;
@@ -71,6 +76,9 @@ async function ensureSpecs(userId: string, env: CtraderEnv, ctid: number, meta: 
     meta.specById.set(Number(s.symbolId), {
       lotSize: Number(s.lotSize) || 0,
       digits: Number(s.digits ?? 0),
+      minVolume: Number(s.minVolume) || 0,
+      stepVolume: Number(s.stepVolume) || 1,
+      maxVolume: Number(s.maxVolume) || 0,
     });
   }
 }
@@ -82,8 +90,44 @@ function specFor(meta: SymbolMeta, symbolId: number): SymbolSpec {
     name: meta.nameById.get(symbolId) ?? `#${symbolId}`,
     lotSize: spec?.lotSize ?? 0,
     digits: spec?.digits ?? 0,
+    minVolume: spec?.minVolume ?? 0,
+    stepVolume: spec?.stepVolume ?? 1,
+    maxVolume: spec?.maxVolume ?? 0,
     quoteAsset: quoteAssetId != null ? (meta.assetNameById.get(quoteAssetId) ?? null) : null,
   };
+}
+
+// Resolve a display symbol name to its broker id and contract spec for a given
+// account, reusing the per-account metadata cache. Returns null when the symbol
+// is unknown to this broker account.
+export async function resolveTradableSymbol(
+  userId: string,
+  env: CtraderEnv,
+  ctid: number,
+  name: string
+): Promise<{ symbolId: number; spec: SymbolSpec } | null> {
+  const meta = await symbolMeta(userId, env, ctid);
+  const symbolId = meta.nameToId.get(name);
+  if (symbolId == null) return null;
+  await ensureSpecs(userId, env, ctid, meta, [symbolId]);
+  return { symbolId, spec: specFor(meta, symbolId) };
+}
+
+// USD conversion factor for a symbol's quote currency at the current cached
+// spot (1 for USD-quoted symbols, or when no conversion pair exists yet).
+// Used by the order-ticket preview so risk figures land in USD like the
+// positions table's net P&L column.
+export async function quoteUsdFactor(userId: string, ctid: number, isLive: boolean, symbolId: number): Promise<number | null> {
+  const env = envFor(isLive);
+  const meta = await symbolMeta(userId, env, ctid);
+  const quote = specFor(meta, symbolId).quoteAsset;
+  if (!quote || quote === "USD") return 1;
+  let convName: string | null = null;
+  if (meta.nameToId.get(`USD${quote}`) != null) convName = `USD${quote}`;
+  else if (meta.nameToId.get(`${quote}USD`) != null) convName = `${quote}USD`;
+  if (!convName) return null;
+  const sockets = userSockets(userId);
+  return quoteToUsdFactor(sockets.getQuote(env, meta.nameToId.get(convName)!), convName);
 }
 
 // The broker symbol whose spot gives a non-USD quote currency's USD value as a
@@ -97,7 +141,7 @@ function conversionId(meta: SymbolMeta, quote: string): number | null {
 
 // Multiplier converting an amount in `quote` currency into USD, read live from
 // the conversion pair's cached spot (USDJPY-like pairs are inverted). Returns
-// null when no rate is available yet — callers show a placeholder rather than a
+// null when no rate is available yet - callers show a placeholder rather than a
 // wrong number. USD-quoted symbols are exactly 1.
 function quoteToUsdFactor(quote: SpotQuote | null, convName: string): number | null {
   if (!quote) return null;
@@ -207,8 +251,8 @@ async function doReconcile(
         side,
         lots: spec.lotSize ? roundLots(volumeCents / spec.lotSize) : volumeCents,
         entryPrice,
-        stopLoss: p.stopLoss != null ? Number(p.stopLoss) : null,
-        takeProfit: p.takeProfit != null ? Number(p.takeProfit) : null,
+        stopLoss: resolveLevel(entryPrice, side, "SL", p.stopLoss, p.relativeStopLoss),
+        takeProfit: resolveLevel(entryPrice, side, "TP", p.takeProfit, p.relativeTakeProfit),
         netUsd: netUsdFor(sockets, env, meta, symId, spec, side, entryPrice, volumeCents),
         digits: spec.digits,
         openTimestamp: td.openTimestamp != null ? Number(td.openTimestamp) : null,
@@ -230,8 +274,8 @@ async function doReconcile(
       orderType: type,
       price,
       lots: spec.lotSize ? roundLots(volumeCents / spec.lotSize) : volumeCents,
-      stopLoss: o.stopLoss != null ? Number(o.stopLoss) : null,
-      takeProfit: o.takeProfit != null ? Number(o.takeProfit) : null,
+      stopLoss: resolveLevel(price, td.tradeSide === "SELL" ? "SELL" : "BUY", "SL", o.stopLoss, o.relativeStopLoss),
+      takeProfit: resolveLevel(price, td.tradeSide === "SELL" ? "SELL" : "BUY", "TP", o.takeProfit, o.relativeTakeProfit),
       digits: spec.digits,
       expirationTimestamp: exp,
       expirationType: exp ? "GTD" : "GTC",
@@ -277,14 +321,14 @@ function netUsdFor(
 }
 
 function roundLots(lots: number): number {
-  // 4 decimal places for lot display — matches standard cTrader precision
+  // 4 decimal places for lot display - matches standard cTrader precision
   return Math.round(lots * 10000) / 10000;
 }
 
 // Fetch trader data (balance, currency, broker name) for an account. Balances
 // are optional per plan §5; errors are non-fatal and result in null balance on
 // the frontend. brokerName (ProtoOATrader field 16) is the whitelabel assigned
-// at account creation — the one reliable source of the broker's display name.
+// at account creation - the one reliable source of the broker's display name.
 export async function getTrader(userId: string, ctid: number, isLive: boolean): Promise<{
   balance: number | null;
   currency: string | null;
@@ -332,7 +376,7 @@ export async function listAccounts(userId: string): Promise<AccountView[]> {
 
   // Fetch balances + broker names best-effort in parallel (each is a single
   // small request per account). The broker name is the only reliable source
-  // from the cTrader Open API — the initial account list does not carry it.
+  // from the cTrader Open API - the initial account list does not carry it.
   await Promise.all(
     accounts.map(async (a) => {
       try {

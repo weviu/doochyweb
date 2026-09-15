@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { ArrowDown, ArrowUp, Plus, Search, X } from "lucide-react";
 import type { OrderRow, PositionRow } from "./api";
 import type { ViewMode } from "./Dashboard";
+import { Card, Chip } from "./components/ui";
 
 export type SortKey =
   | "symbol"
@@ -168,39 +170,6 @@ export function sortRows<T extends PositionRow | OrderRow>(
   return sorted;
 }
 
-// Clickable table-header cell that sorts by its column. First click on a column
-// sorts ascending; clicking the active column again toggles the direction.
-export function SortTh({
-  label,
-  k,
-  state,
-  onPatch,
-  className,
-}: {
-  label: string;
-  k: SortKey;
-  state: FilterState;
-  onPatch: (p: FilterPatch) => void;
-  className?: string;
-}) {
-  const active = state.sortKey === k;
-  return (
-    <th className={className}>
-      <button
-        type="button"
-        className={`sort-th ${active ? "sort-th-on" : ""}`}
-        onClick={() => onPatch(active ? { sortAsc: !state.sortAsc } : { sortKey: k, sortAsc: true })}
-        title={active ? (state.sortAsc ? "Sorted ascending" : "Sorted descending") : `Sort by ${label}`}
-      >
-        {label}
-        <span className={`sort-arrow ${active ? "" : "inactive"}`}>
-          {active ? (state.sortAsc ? "↑" : "↓") : "↕"}
-        </span>
-      </button>
-    </th>
-  );
-}
-
 const STORAGE_POS = "doochyweb_pos_filters";
 const STORAGE_ORD = "doochyweb_ord_filters";
 
@@ -226,6 +195,57 @@ export function saveFilter(orders: boolean, st: FilterState): void {
 
 export function uniqueSymbols(rows: readonly (PositionRow | OrderRow)[]): string[] {
   return Array.from(new Set(rows.map((r) => r.symbol))).sort((a, b) => a.localeCompare(b));
+}
+
+function sortOptionsFor(positions: boolean): Array<[SortKey, string]> {
+  return positions
+    ? [
+        ["symbol", "Symbol"],
+        ["side", "Side"],
+        ["lots", "Lots"],
+        ["entryPrice", "Entry"],
+        ["stopLoss", "SL"],
+        ["takeProfit", "TP"],
+        ["netUsd", "Net USD"],
+        ["openTimestamp", "Opened"],
+        ["account", "Account"],
+      ]
+    : [
+        ["symbol", "Symbol"],
+        ["side", "Side"],
+        ["lots", "Lots"],
+        ["orderType", "Type"],
+        ["price", "Level"],
+        ["stopLoss", "SL"],
+        ["takeProfit", "TP"],
+        ["account", "Account"],
+      ];
+}
+
+// A pill toggle used for Side / Type filters.
+function Pill({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        "rounded-md border px-2.5 py-1 text-xs font-medium transition " +
+        (active
+          ? "border-accent/20 bg-accent-soft text-accent"
+          : "border-hairline bg-surface text-fg-muted hover:bg-surface-hover hover:text-fg")
+      }
+    >
+      {children}
+    </button>
+  );
 }
 
 export default function FilterBar({
@@ -307,33 +327,28 @@ export default function FilterBar({
     state.distMin != null ||
     state.distMax != null;
 
+  const sortOptions = sortOptionsFor(!!positions);
+
   return (
-    <div className={`filter-bar ${orders ? "filter-orders" : "filter-positions"}`}>
-      <div className="filter-row-main">
-        <label className="filter-search">
-          <svg className="ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-            <path
-              d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0z"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-            />
-          </svg>
+    <Card flat className="p-4">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2.5">
+        {/* free-text search */}
+        <div className="relative flex min-w-[170px] flex-1 items-center">
+          <Search className="pointer-events-none absolute left-2.5 h-4 w-4 text-fg-muted" />
           <input
             type="search"
             placeholder={orders ? "Search pending orders…" : "Search positions…"}
             value={state.search}
             onChange={(e) => onChange({ search: e.target.value })}
             aria-label="Search"
+            className="w-full rounded-md border border-hairline bg-surface py-2 pl-9 pr-3 text-sm text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
           />
-        </label>
+        </div>
 
-        <div className="filter-sym" ref={symRef}>
-          <div className="filter-sym-input">
-            <svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
-              <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-            </svg>
+        {/* symbol multi-select combobox */}
+        <div className="relative min-w-[150px] flex-none" ref={symRef}>
+          <div className="relative">
+            <Plus className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-fg-muted" />
             <input
               ref={symInputRef}
               type="text"
@@ -349,22 +364,23 @@ export default function FilterBar({
               onFocus={() => setSymOpen(true)}
               onKeyDown={onSymKey}
               aria-label="Add symbol filter"
+              className="w-full rounded-md border border-hairline bg-surface py-2 pl-9 pr-8 text-sm text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
             />
             {state.symbolsSel.length > 0 && (
               <button
                 type="button"
-                className="filter-sym-clear"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-fg-faint transition hover:text-fg"
                 title="Clear all symbol filters"
                 onClick={() => onChange({ symbolsSel: [] })}
               >
-                ✕
+                <X className="h-3.5 w-3.5" />
               </button>
             )}
           </div>
           {symOpen && (
-            <div className="filter-sym-pop">
+            <div className="absolute left-0 right-0 top-[calc(100%+4px)] z-40 max-h-60 overflow-y-auto rounded-lg border border-hairline bg-surface p-1 shadow-overlay">
               {symMatches.length === 0 ? (
-                <div className="filter-none">
+                <div className="px-2.5 py-2 text-xs text-fg-muted">
                   {symQuery ? "No matching symbols" : "No symbols available"}
                 </div>
               ) : (
@@ -372,11 +388,14 @@ export default function FilterBar({
                   <button
                     key={s}
                     type="button"
-                    className={`filter-opt ${i === activeSym ? "active" : ""}`}
                     onMouseEnter={() => setActiveSym(i)}
                     onClick={() => addSymbol(s)}
+                    className={
+                      "block w-full rounded-md px-2.5 py-1.5 text-left text-sm transition " +
+                      (i === activeSym ? "bg-accent-soft text-accent" : "text-fg hover:bg-surface-hover")
+                    }
                   >
-                    <span className="mono">{s}</span>
+                    {s}
                   </button>
                 ))
               )}
@@ -384,73 +403,62 @@ export default function FilterBar({
           )}
         </div>
 
-        <div className="filter-sides">
-          <span className="filter-ph">Side</span>
-          <button
-            type="button"
-            className={`filter-pill ${state.sides.length === 0 ? "on" : ""}`}
-            onClick={() => onChange({ sides: [] })}
-          >
+        {/* side pills */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs font-medium text-fg-muted">Side</span>
+          <Pill active={state.sides.length === 0} onClick={() => onChange({ sides: [] })}>
             Any
-          </button>
+          </Pill>
           {["BUY", "SELL"].map((sd) => (
-            <button
-              key={sd}
-              type="button"
-              className={`filter-pill ${state.sides.includes(sd) ? "on" : ""}`}
-              onClick={() => onChange({ sides: toggleIn(state.sides, sd) })}
-            >
+            <Pill key={sd} active={state.sides.includes(sd)} onClick={() => onChange({ sides: toggleIn(state.sides, sd) })}>
               {sd}
-            </button>
+            </Pill>
           ))}
         </div>
 
+        {/* order type pills */}
         {orders && orderTypes && orderTypes.length > 0 && (
-          <div className="filter-types">
-            <span className="filter-ph">Type</span>
-            <button
-              type="button"
-              className={`filter-pill ${state.orderTypesSel.length === 0 ? "on" : ""}`}
-              onClick={() => onChange({ orderTypesSel: [] })}
-            >
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-medium text-fg-muted">Type</span>
+            <Pill active={state.orderTypesSel.length === 0} onClick={() => onChange({ orderTypesSel: [] })}>
               Any
-            </button>
+            </Pill>
             {orderTypes.map((t) => (
-              <button
+              <Pill
                 key={t}
-                type="button"
-                className={`filter-pill ${state.orderTypesSel.includes(t) ? "on" : ""}`}
+                active={state.orderTypesSel.includes(t)}
                 onClick={() => onChange({ orderTypesSel: toggleIn(state.orderTypesSel, t) })}
               >
                 {t}
-              </button>
+              </Pill>
             ))}
           </div>
         )}
 
-        {(positions && state.netState !== "any") && (
-          <div className="filter-net">
-            <span className="filter-ph">Net P/L</span>
+        {/* net P/L range (positions) */}
+        {positions && state.netState !== "any" && (
+          <div className="flex items-center gap-1.5">
             <select
               value={state.netState}
               onChange={(e) => onChange({ netState: e.target.value as NetState })}
               aria-label="Net P/L"
+              className="rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs text-fg focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
             >
-              <option value="any">Any</option>
+              <option value="any">P/L any</option>
               <option value="profit">Profit</option>
               <option value="loss">Loss</option>
             </select>
             <input
               type="number"
-              className="filter-input"
+              className="w-[64px] rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
               placeholder="min $"
               value={state.netMin ?? ""}
               onChange={(e) => onChange({ netMin: e.target.value === "" ? null : Number(e.target.value) })}
             />
-            <span className="filter-dash">–</span>
+            <span className="text-xs text-fg-muted">–</span>
             <input
               type="number"
-              className="filter-input"
+              className="w-[64px] rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
               placeholder="max $"
               value={state.netMax ?? ""}
               onChange={(e) => onChange({ netMax: e.target.value === "" ? null : Number(e.target.value) })}
@@ -458,20 +466,21 @@ export default function FilterBar({
           </div>
         )}
 
+        {/* distance range (orders) */}
         {orders && (
-          <div className="filter-dist">
-            <span className="filter-ph">Dist (pts)</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-medium text-fg-muted">Dist (pts)</span>
             <input
               type="number"
-              className="filter-input"
+              className="w-[60px] rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
               placeholder="min"
               value={state.distMin ?? ""}
               onChange={(e) => onChange({ distMin: e.target.value === "" ? null : Number(e.target.value) })}
             />
-            <span className="filter-dash">–</span>
+            <span className="text-xs text-fg-muted">–</span>
             <input
               type="number"
-              className="filter-input"
+              className="w-[60px] rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
               placeholder="max"
               value={state.distMax ?? ""}
               onChange={(e) => onChange({ distMax: e.target.value === "" ? null : Number(e.target.value) })}
@@ -479,10 +488,35 @@ export default function FilterBar({
           </div>
         )}
 
+        {/* sort */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs font-medium text-fg-muted">Sort</span>
+          <select
+            value={state.sortKey}
+            onChange={(e) => onChange({ sortKey: e.target.value as SortKey })}
+            aria-label="Sort by"
+            className="rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs text-fg focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
+          >
+            {sortOptions.map(([k, label]) => (
+              <option key={k} value={k}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => onChange({ sortAsc: !state.sortAsc })}
+            aria-label={state.sortAsc ? "Sorted ascending" : "Sorted descending"}
+            title={state.sortAsc ? "Ascending" : "Descending"}
+            className="rounded-md border border-hairline bg-surface px-1.5 py-1.5 text-fg-muted transition hover:bg-surface-hover hover:text-fg"
+          >
+            {state.sortAsc ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+
         {hasActive && (
           <button
             type="button"
-            className="filter-reset"
             onClick={() =>
               onChange({
                 search: "",
@@ -496,6 +530,7 @@ export default function FilterBar({
                 distMax: null,
               })
             }
+            className="ml-auto rounded-md border border-hairline bg-surface px-2.5 py-1.5 text-xs text-fg-muted transition hover:border-danger/40 hover:text-danger"
           >
             Reset
           </button>
@@ -503,27 +538,24 @@ export default function FilterBar({
       </div>
 
       {(state.symbolsSel.length > 0 || state.sides.length > 0 || state.orderTypesSel.length > 0) && (
-        <div className="filter-chips">
+        <div className="mt-3 flex flex-wrap gap-1.5 border-t border-hairline pt-3">
           {state.symbolsSel.map((s) => (
-            <span key={s} className="filter-chip" onClick={() => deleteSymbol(s)} title="Remove symbol">
-              <span className="mono">{s}</span>
-              <span className="filter-chip-x">✕</span>
-            </span>
+            <Chip key={s} onRemove={() => deleteSymbol(s)}>
+              {s}
+            </Chip>
           ))}
           {state.sides.map((s) => (
-            <span key={s} className="filter-chip" onClick={() => onChange({ sides: state.sides.filter((x) => x !== s) })} title="Remove side">
+            <Chip key={s} onRemove={() => onChange({ sides: state.sides.filter((x) => x !== s) })}>
               {s}
-              <span className="filter-chip-x">✕</span>
-            </span>
+            </Chip>
           ))}
           {state.orderTypesSel.map((t) => (
-            <span key={t} className="filter-chip" onClick={() => onChange({ orderTypesSel: state.orderTypesSel.filter((x) => x !== t) })} title="Remove type">
+            <Chip key={t} onRemove={() => onChange({ orderTypesSel: state.orderTypesSel.filter((x) => x !== t) })}>
               {t}
-              <span className="filter-chip-x">✕</span>
-            </span>
+            </Chip>
           ))}
         </div>
       )}
-    </div>
+    </Card>
   );
 }

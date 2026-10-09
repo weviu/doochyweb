@@ -77,7 +77,7 @@ export default function OrdersTab({
           accounts.map(async (a) => {
             try {
               const { orders } = await api.orders(a.ctid);
-              const acct: RowAccount = { ctid: a.ctid, login: a.login, isLive: a.isLive, nickname: a.nickname };
+              const acct: RowAccount = { ctid: a.ctid, login: a.login, isLive: a.isLive, nickname: a.nickname, color: a.color };
               return orders.map((o) => ({ ...o, account: acct })) as OrderRow[];
             } catch {
               return null;
@@ -255,7 +255,7 @@ export default function OrdersTab({
 function selectedLabel(accounts: AccountView[], ctid: number | null): string {
   const a = accounts.find((x) => x.ctid === ctid);
   if (!a) return ctid != null ? `Account #${ctid}` : "No account";
-  return `${a.broker} · ${a.login}`;
+  return `${a.nickname?.trim() || a.login} · ${a.broker}`;
 }
 
 // A resting LIMIT/STOP order awaiting fill. Not a position yet, so no P&L. Shows
@@ -318,7 +318,7 @@ function PendingCard({
       <div className="p-4">
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
-            {o.account && <AccountChip login={o.account.login} nickname={o.account.nickname} isLive={o.account.isLive} />}
+            {o.account && <AccountChip login={o.account.login} nickname={o.account.nickname} color={o.account.color} />}
             <Badge tone={isBuy ? "success" : "danger"}>
               {isBuy ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}
               {o.side}

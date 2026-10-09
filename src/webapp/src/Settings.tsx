@@ -3,8 +3,14 @@ import { AlertCircle, ArrowLeft, KeyRound, Save } from "lucide-react";
 import { api, ApiError, AccountView, ConnectInput } from "./api";
 import ConnectPanel from "./ConnectPanel";
 import { fmtMoney } from "./Dashboard";
-import { Button, Card, inputCls } from "./components/ui";
+import { ACCOUNT_COLORS, Button, Card, inputCls } from "./components/ui";
 import { FadeRise } from "./components/motion";
+
+type AccountPrefs = { nickname: string; color: string | null };
+
+function prefsFrom(accounts: AccountView[]): Record<number, AccountPrefs> {
+  return Object.fromEntries(accounts.map((a) => [a.ctid, { nickname: a.nickname ?? "", color: a.color ?? null }]));
+}
 
 export default function SettingsPage({
   accounts,
@@ -17,29 +23,41 @@ export default function SettingsPage({
   onAccountsChanged: (accounts: AccountView[]) => void;
   onClose: () => void;
 }) {
-  const [drafts, setDrafts] = useState<Record<number, string>>(() =>
-    Object.fromEntries(accounts.map((a) => [a.ctid, a.nickname ?? ""]))
-  );
-  const [saving, setSaving] = useState<number | null>(null);
+  const [prefs, setPrefs] = useState<Record<number, AccountPrefs>>(() => prefsFrom(accounts));
+  const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [showConnect, setShowConnect] = useState(false);
 
   useEffect(() => {
-    setDrafts(Object.fromEntries(accounts.map((a) => [a.ctid, a.nickname ?? ""])));
+    setPrefs(prefsFrom(accounts));
   }, [accounts]);
 
-  async function saveNickname(ctid: number) {
-    setSaving(ctid);
+  function dirtyPairs(): { ctid: number; nickname: string; color: string | null }[] {
+    return accounts
+      .map((a) => {
+        const p = prefs[a.ctid] ?? { nickname: "", color: null };
+        const nickname = p.nickname.trim();
+        const color = p.color ?? null;
+        const dirty = nickname !== (a.nickname ?? "") || color !== (a.color ?? null);
+        return dirty ? { ctid: a.ctid, nickname, color } : null;
+      })
+      .filter((x): x is { ctid: number; nickname: string; color: string | null } => x != null);
+  }
+  const anyDirty = dirtyPairs().length > 0;
+
+  async function saveAll() {
+    const pairs = dirtyPairs();
+    if (!pairs.length) return;
+    setSaving(true);
     setSaveError(null);
     try {
-      const nickname = (drafts[ctid] ?? "").trim();
-      await api.setNickname(ctid, nickname);
+      await Promise.all(pairs.map((c) => api.setPrefs(c.ctid, { nickname: c.nickname, color: c.color })));
       const { accounts: fresh } = await api.accounts();
       onAccountsChanged(fresh);
     } catch (err: any) {
-      setSaveError(err instanceof ApiError ? err.message : "Failed to save nickname");
+      setSaveError(err instanceof ApiError ? err.message : "Failed to save nickname / colour");
     } finally {
-      setSaving(null);
+      setSaving(false);
     }
   }
 
@@ -94,16 +112,15 @@ export default function SettingsPage({
         <FadeRise>
           <Card className="p-4">
             <div className="space-y-1">
-              <h2 className="text-sm font-semibold tracking-tight text-fg">Account nicknames</h2>
+<h2 className="text-sm font-semibold tracking-tight text-fg">Account names & colours</h2>
               <p className="text-sm text-fg-muted">
-                Nicknames live on your side only; they are never sent to cTrader. Each account can have its own name so
-                you can tell them apart in the account list and on positions and orders.
+                Nicknames and colours live on your side only; they are never sent to cTrader. Give each account its own
+                name and colour so you can tell them apart at a glance on positions and orders.
               </p>
             </div>
             <div className="mt-3 divide-y divide-hairline">
               {accounts.map((a) => {
-                const draft = drafts[a.ctid] ?? "";
-                const dirty = draft !== (a.nickname ?? "");
+                const p = prefs[a.ctid] ?? { nickname: "", color: null };
                 return (
                   <div key={a.ctid} className="flex items-center gap-3 py-4">
                     <div className="min-w-0 flex-1">
@@ -124,28 +141,59 @@ export default function SettingsPage({
                         {a.balance != null ? `${fmtMoney(a.balance)} ${a.currency ?? ""}` : "- balance"}
                       </div>
                     </div>
-                    <div className="w-44 shrink-0">
+                    <div className="flex w-48 shrink-0 flex-col items-end gap-2">
                       <input
                         className={inputCls}
-                        value={draft}
+                        value={p.nickname}
                         maxLength={40}
                         placeholder="e.g. Main"
-                        onChange={(e) => setDrafts((d) => ({ ...d, [a.ctid]: e.target.value }))}
+                        onChange={(e) =>
+                          setPrefs((d) => ({ ...d, [a.ctid]: { ...(d[a.ctid] ?? p), nickname: e.target.value } }))
+                        }
                       />
+                      <div className="flex items-center gap-1.5">
+                        {ACCOUNT_COLORS.map((c) => {
+                          const active = p.color === c.key;
+                          return (
+                            <button
+                              key={c.key}
+                              type="button"
+                              title={c.label}
+                              aria-label={c.label}
+                              aria-pressed={active}
+                              onClick={() =>
+                                setPrefs((d) => ({
+                                  ...d,
+                                  [a.ctid]: { ...(d[a.ctid] ?? p), color: active ? null : c.key },
+                                }))
+                              }
+                              className={`h-5 w-5 rounded-full transition ${
+                                active ? "ring-2 ring-white/80" : "ring-1 ring-white/15 hover:ring-white/40"
+                              }`}
+                              style={{ background: c.hex }}
+                            />
+                          );
+                        })}
+                      </div>
                     </div>
-                    <Button
-                      size="sm"
-                      className="shrink-0"
-                      variant={dirty ? "primary" : "secondary"}
-                      icon={<Save className="h-3.5 w-3.5" />}
-                      disabled={!dirty}
-                      onClickAsync={dirty ? () => saveNickname(a.ctid) : undefined}
-                    >
-                      {saving === a.ctid ? "Saving…" : "Save"}
-                    </Button>
                   </div>
                 );
               })}
+            </div>
+            <div className="mt-4 flex items-center justify-between gap-3 border-t border-hairline pt-4">
+              <span className="text-xs text-fg-faint">
+                {anyDirty
+                  ? `${dirtyPairs().length} unsaved change${dirtyPairs().length === 1 ? "" : "s"}`
+                  : "Up to date"}
+              </span>
+<Button
+                variant="primary"
+                icon={<Save className="h-4 w-4" />}
+                disabled={!anyDirty || saving}
+                onClickAsync={saveAll}
+              >
+                Save changes
+              </Button>
             </div>
           </Card>
         </FadeRise>
@@ -163,10 +211,10 @@ export default function SettingsPage({
                 Update credentials
               </Button>
             </div>
-            <p className="mt-3 text-xs leading-relaxed text-fg-faint">
+            {/* <p className="mt-3 text-xs leading-relaxed text-fg-faint">
               The server keeps a live-token version of these credentials inside ~/.doochyweb. Reconnecting renews it;
               there is nothing else to manage here.
-            </p>
+            </p> */}
           </Card>
         </FadeRise>
       </main>

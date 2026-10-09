@@ -127,7 +127,11 @@ app.get("/api/accounts", authRequired, async (req: AuthedRequest, res: Response)
   }
 });
 
-app.put("/api/accounts/:ctid/nickname", authRequired, async (req: AuthedRequest, res: Response) => {
+const ACCOUNT_COLOR_KEYS = ["blue", "green", "red", "amber", "violet", "teal"];
+const nicknameOrColor = /\/nickname|\/prefs/;
+
+// Legacy endpoint kept for backward compatibility; canonical is /prefs now.
+app.put([ "/api/accounts/:ctid/nickname", "/api/accounts/:ctid/prefs" ], authRequired, async (req: AuthedRequest, res: Response) => {
   try {
     const ctid = Number(req.params.ctid);
     if (!Number.isFinite(ctid) || ctid <= 0) {
@@ -139,14 +143,21 @@ app.put("/api/accounts/:ctid/nickname", authRequired, async (req: AuthedRequest,
       res.status(400).json({ error: "nickname must be 40 characters or fewer" });
       return;
     }
+    const color = req.body?.color == null || req.body?.color === "" ? null : String(req.body.color);
+    if (color != null && !ACCOUNT_COLOR_KEYS.includes(color)) {
+      res.status(400).json({ error: "invalid colour" });
+      return;
+    }
     const creds = await loadCredentials(req.userId!);
     if (!creds || !creds.accounts.some((a) => a.ctid === ctid)) {
       res.status(404).json({ error: "account not found" });
       return;
     }
-    // Nickname is user-side only: stored in the user's credentials doc, never
-    // sent to the broker.
-    const accounts = creds.accounts.map((a) => (a.ctid === ctid ? { ...a, nickname: nickname || null } : a));
+    const accounts = creds.accounts.map((a) =>
+      a.ctid === ctid
+        ? { ...a, nickname: nickname || a.nickname, color: req.body?.hasOwnProperty("color") ? (color || null) : a.color }
+        : a,
+    );
     await saveCredentials(req.userId!, {
       clientId: creds.clientId,
       clientSecret: creds.clientSecret,
@@ -154,7 +165,7 @@ app.put("/api/accounts/:ctid/nickname", authRequired, async (req: AuthedRequest,
       refreshToken: creds.refreshToken,
       accounts,
     });
-    res.json({ ok: true, nickname });
+    res.json({ ok: true, nickname: nickname || null, color });
   } catch (err: any) {
     res.status(500).json({ error: err.message ?? "failed" });
   }

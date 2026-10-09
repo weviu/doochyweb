@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, ChevronDown } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { AlertTriangle, Search } from "lucide-react";
 import { api, OrderKind, OrderPreview, Side } from "../api";
 import { fmtMoney } from "../Dashboard";
 import { Button, Metric } from "../components/ui";
@@ -48,6 +48,50 @@ export default function OrderTicket({
   const symbolsRef = useRef(symbols);
   symbolsRef.current = symbols;
 
+  const [symOpen, setSymOpen] = useState(false);
+  const [symQuery, setSymQuery] = useState("");
+  const [activeSym, setActiveSym] = useState(-1);
+  const symRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onDoc(ev: MouseEvent) {
+      if (symRef.current && !symRef.current.contains(ev.target as Node)) setSymOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  const symMatches = useMemo(() => {
+    const q = symQuery.trim().toUpperCase();
+    return (q ? symbols.filter((s) => s.toUpperCase().includes(q)) : symbols).slice(0, 50);
+  }, [symbols, symQuery]);
+
+  function pickSymbol(s: string): void {
+    setSymbol(s);
+    setSymQuery("");
+    setSymOpen(false);
+    setActiveSym(-1);
+  }
+
+  function onSymKey(ev: KeyboardEvent<HTMLInputElement>): void {
+    if (ev.key === "Escape") {
+      setSymOpen(false);
+      return;
+    }
+    if (!symOpen || symMatches.length === 0) return;
+    if (ev.key === "ArrowDown") {
+      ev.preventDefault();
+      setActiveSym((i) => (i + 1) % symMatches.length);
+    } else if (ev.key === "ArrowUp") {
+      ev.preventDefault();
+      setActiveSym((i) => (i <= 0 ? symMatches.length - 1 : i - 1));
+    } else if (ev.key === "Enter") {
+      ev.preventDefault();
+      const pick = symMatches[activeSym >= 0 ? activeSym : 0];
+      if (pick) pickSymbol(pick);
+    }
+  }
+
   useEffect(() => {
     if (open) {
       setSymbol((cur) => (symbolsRef.current.includes(cur) ? cur : symbolsRef.current[0] ?? ""));
@@ -61,6 +105,9 @@ export default function OrderTicket({
       setPreviewErr(null);
       setStatus(null);
       setConfirm(false);
+      setSymQuery("");
+      setSymOpen(false);
+      setActiveSym(-1);
     }
   }, [open]);
 
@@ -152,20 +199,52 @@ export default function OrderTicket({
           {/* Symbol */}
           <div>
             <span className="mb-2 block text-sm font-medium text-fg-muted">Symbol</span>
-            <div className="relative">
-              <select
-                id="ticket-symbol"
-                value={symbol}
-                onChange={(e) => setSymbol(e.target.value)}
-                className="w-full appearance-none rounded-md border border-hairline bg-surface py-2 pl-3 pr-8 text-sm font-semibold tracking-tight text-fg focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
-              >
-                {symbols.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-muted" />
+            <div ref={symRef} className="relative">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-muted" />
+                <input
+                  type="text"
+                  role="combobox"
+                  aria-expanded={symOpen}
+                  aria-label="Symbol"
+                  value={symOpen ? symQuery : symbol}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="Search symbol…"
+                  onChange={(e) => {
+                    setSymQuery(e.target.value);
+                    setActiveSym(-1);
+                    setSymOpen(true);
+                  }}
+                  onFocus={() => setSymOpen(true)}
+                  onKeyDown={onSymKey}
+                  className="w-full appearance-none rounded-md border border-hairline bg-surface py-2 pl-9 pr-3 text-sm font-semibold tracking-tight text-fg placeholder:font-normal placeholder:tracking-normal placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
+                />
+              </div>
+              {symOpen && (
+                <div className="absolute left-0 right-0 top-[calc(100%+4px)] z-40 max-h-60 overflow-y-auto rounded-lg border border-hairline bg-surface p-1 shadow-overlay">
+                  {symMatches.length === 0 ? (
+                    <div className="px-2.5 py-2 text-xs text-fg-muted">
+                      {symQuery ? "No matching symbols" : "No symbols available"}
+                    </div>
+                  ) : (
+                    symMatches.map((s, i) => (
+                      <button
+                        key={s}
+                        type="button"
+                        onMouseEnter={() => setActiveSym(i)}
+                        onClick={() => pickSymbol(s)}
+                        className={
+                          "block w-full rounded-md px-2.5 py-1.5 text-left text-sm transition " +
+                          (i === activeSym ? "bg-accent-soft text-accent" : "text-fg hover:bg-surface-hover")
+                        }
+                      >
+                        {s}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
@@ -191,7 +270,6 @@ export default function OrderTicket({
                 options={[
                   { value: "MARKET", label: "Market" },
                   { value: "LIMIT", label: "Limit" },
-                  { value: "STOP", label: "Stop" },
                 ]}
               />
             </div>

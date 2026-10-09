@@ -29,7 +29,7 @@ export default function Login({ onAuthed }: { onAuthed: (token: string) => void 
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent-soft text-accent">
             <Lock className="h-5 w-5" />
           </div>
-          <h1 className="mt-4 text-2xl font-semibold tracking-tight">DoochyWeb</h1>
+          <h1 className="mt-4 text-2xl font-semibold tracking-tight">Sign In</h1>
           <p className="mt-1 text-sm text-fg-muted">
             {mode === "login" ? "Sign in to manage your cTrader accounts" : "Create an account to get started"}
           </p>

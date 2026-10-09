@@ -22,6 +22,7 @@ export interface StoredAccount {
   broker: string;
   isLive: boolean;
   nickname?: string | null;
+  color?: string | null;
 }
 
 const credentialsSchema = new mongoose.Schema({
@@ -30,7 +31,7 @@ const credentialsSchema = new mongoose.Schema({
   clientSecret: { type: String, required: true },
   accessToken: { type: String, required: true },
   refreshToken: { type: String, required: true },
-  accounts: { type: [{ ctid: Number, login: Number, broker: String, isLive: Boolean, nickname: String }], default: [] },
+  accounts: { type: [{ ctid: Number, login: Number, broker: String, isLive: Boolean, nickname: String, color: String }], default: [] },
   updatedAt: { type: Date, default: Date.now },
 });
 

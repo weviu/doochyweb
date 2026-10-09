@@ -165,7 +165,7 @@ export default function Dashboard({ onLogout }: { onLogout: () => void }) {
                       )}
                       {liveAccounts.map((a) => (
                         <option key={a.ctid} value={a.ctid}>
-                          {a.login} · {a.broker}
+                          {(a.nickname?.trim() || a.login)} · {a.broker}
                           {a.balance != null ? ` · ${fmtMoney(a.balance)} ${a.currency ?? ""}` : ""}
                         </option>
                       ))}
@@ -176,7 +176,7 @@ export default function Dashboard({ onLogout }: { onLogout: () => void }) {
                       )}
                       {demoAccounts.map((a) => (
                         <option key={a.ctid} value={a.ctid}>
-                          {a.login} · {a.broker}
+                          {(a.nickname?.trim() || a.login)} · {a.broker}
                           {a.balance != null ? ` · ${fmtMoney(a.balance)} ${a.currency ?? ""}` : ""}
                         </option>
                       ))}

@@ -355,6 +355,7 @@ export interface AccountView {
   balance: number | null;
   currency: string | null;
   nickname: string | null;
+  color: string | null;
 }
 
 // Fetch live balances for all stored accounts. Errors fetching individual
@@ -372,6 +373,7 @@ export async function listAccounts(userId: string): Promise<AccountView[]> {
     balance: null,
     currency: null,
     nickname: a.nickname ?? null,
+    color: a.color ?? null,
   }));
 
   // Fetch balances + broker names best-effort in parallel (each is a single

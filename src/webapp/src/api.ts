@@ -56,6 +56,7 @@ export interface AccountView {
   balance: number | null;
   currency: string | null;
   nickname: string | null;
+  color: string | null;
 }
 
 // Account carried on a row when its data is shown in combined mode, so the
@@ -65,6 +66,7 @@ export interface RowAccount {
   login: number;
   isLive: boolean;
   nickname: string | null;
+  color: string | null;
 }
 
 export interface PositionRow {
@@ -153,10 +155,10 @@ export const api = {
 
   orders: (ctid: number) => request<{ orders: OrderRow[] }>(`/api/accounts/${ctid}/orders`),
 
-  setNickname: (ctid: number, nickname: string, token?: string) =>
-    request<{ ok: boolean }>(`/api/accounts/${ctid}/nickname`, {
+  setPrefs: (ctid: number, prefs: { nickname?: string; color?: string | null }, token?: string) =>
+    request<{ ok: boolean }>(`/api/accounts/${ctid}/prefs`, {
       method: "PUT",
-      body: { nickname },
+      body: prefs,
       token,
     }),
 

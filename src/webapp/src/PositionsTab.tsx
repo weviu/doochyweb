@@ -80,7 +80,7 @@ export default function PositionsTab({
           accounts.map(async (a) => {
             try {
               const { positions } = await api.positions(a.ctid);
-              const acct = { ctid: a.ctid, login: a.login, isLive: a.isLive, nickname: a.nickname };
+              const acct = { ctid: a.ctid, login: a.login, isLive: a.isLive, nickname: a.nickname, color: a.color };
               return positions.map((p) => ({ ...p, account: acct })) as PositionRow[];
             } catch {
               return null;
@@ -137,6 +137,18 @@ export default function PositionsTab({
 
   const accountLabel = selectedLabel(accounts, ctid);
 
+  const totalPnl = useMemo(() => {
+    let sum = 0;
+    let hasAny = false;
+    for (const r of shown) {
+      if (r.netUsd != null) {
+        sum += r.netUsd;
+        hasAny = true;
+      }
+    }
+    return hasAny ? sum : null;
+  }, [shown]);
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
@@ -171,6 +183,15 @@ export default function PositionsTab({
           </Button>
         </div>
       </div>
+
+      {totalPnl != null && (
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-fg-faint">Total P&L</span>
+          <span className={`font-semibold tabular-nums ${totalPnl > 0 ? "text-success" : totalPnl < 0 ? "text-danger" : "text-fg"}`}>
+            {totalPnl >= 0 ? "+" : ""}{fmtMoney(totalPnl)}
+          </span>
+        </div>
+      )}
 
       <FilterBar mode={mode} positions orders={false} state={filters} onChange={patchFilters} symbols={symbols} orderTypes={[]} />
 
@@ -254,7 +275,7 @@ export default function PositionsTab({
 function selectedLabel(accounts: AccountView[], ctid: number | null): string {
   const a = accounts.find((x) => x.ctid === ctid);
   if (!a) return ctid != null ? `Account #${ctid}` : "No account";
-  return `${a.broker} · ${a.login}`;
+  return `${a.nickname?.trim() || a.login} · ${a.broker}`;
 }
 
 function PositionCard({
@@ -321,7 +342,7 @@ function PositionCard({
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
             {p.account && (
-              <AccountChip login={p.account.login} nickname={p.account.nickname} isLive={p.account.isLive} />
+              <AccountChip login={p.account.login} nickname={p.account.nickname} color={p.account.color} />
             )}
             <Badge tone={isBuy ? "success" : "danger"}>
               {isBuy ? <ArrowUpRight className="h-3.5 w-3.5" /> : <ArrowDownRight className="h-3.5 w-3.5" />}

@@ -141,22 +141,39 @@ export const inputCls =
   "placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40 " +
   "disabled:opacity-50 disabled:pointer-events-none";
 
+// Account color palette, used to visually separate accounts (settings swatches
+// and the combined-mode identity chip). Rendered as inline-style dots so the
+// colours survive Tailwind's class purging. Keys double as the server whitelist.
+export const ACCOUNT_COLORS = [
+  { key: "blue", hex: "#1E4D8F", label: "Blue" },
+  { key: "green", hex: "#30A36C", label: "Green" },
+  { key: "red", hex: "#E5484D", label: "Red" },
+  { key: "amber", hex: "#D98032", label: "Amber" },
+  { key: "violet", hex: "#8B6AD2", label: "Violet" },
+  { key: "teal", hex: "#18B8A6", label: "Teal" },
+] as const;
+
+export function accountColorHex(key: string | null | undefined): string | null {
+  const found = ACCOUNT_COLORS.find((c) => c.key === key);
+  return found ? found.hex : null;
+}
+
 // Combined-mode row identity: which account a position/order came from. Shows
-// the nickname when one is set; un-nicknamed accounts get the login number plus
-// a LIVE/DEMO tag so the row's environment is never ambiguous.
+// the nickname when one is set; un-nicknamed accounts get the login number.
 export function AccountChip({
   login,
   nickname,
-  isLive,
+  color,
 }: {
   login: number;
   nickname: string | null;
-  isLive: boolean;
+  color?: string | null;
 }) {
+  const hex = accountColorHex(color);
   return (
-    <Badge tone={isLive ? "accent" : "muted"}>
+    <Badge tone="muted">
+      {hex && <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: hex }} />}
       {nickname ?? login}
-      {isLive ? " · LIVE" : " · DEMO"}
     </Badge>
   );
 }

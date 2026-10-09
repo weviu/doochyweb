@@ -330,7 +330,7 @@ export default function FilterBar({
   const sortOptions = sortOptionsFor(!!positions);
 
   return (
-    <Card flat className="p-4">
+    <Card className="p-4">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2.5">
         {/* free-text search */}
         <div className="relative flex min-w-[170px] flex-1 items-center">
@@ -341,7 +341,7 @@ export default function FilterBar({
             value={state.search}
             onChange={(e) => onChange({ search: e.target.value })}
             aria-label="Search"
-            className="w-full rounded-md border border-hairline bg-surface py-2 pl-9 pr-3 text-sm text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
+            className="w-full rounded-lg border border-hairline-strong bg-soft py-2 pl-9 pr-3 text-sm text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
           />
         </div>
 
@@ -364,7 +364,7 @@ export default function FilterBar({
               onFocus={() => setSymOpen(true)}
               onKeyDown={onSymKey}
               aria-label="Add symbol filter"
-              className="w-full rounded-md border border-hairline bg-surface py-2 pl-9 pr-8 text-sm text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
+              className="w-full rounded-lg border border-hairline-strong bg-soft py-2 pl-9 pr-8 text-sm text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
             />
             {state.symbolsSel.length > 0 && (
               <button
@@ -442,7 +442,7 @@ export default function FilterBar({
               value={state.netState}
               onChange={(e) => onChange({ netState: e.target.value as NetState })}
               aria-label="Net P/L"
-              className="rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs text-fg focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
+              className="rounded-lg border border-hairline-strong bg-soft px-2 py-1.5 text-xs text-fg focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
             >
               <option value="any">P/L any</option>
               <option value="profit">Profit</option>
@@ -450,7 +450,7 @@ export default function FilterBar({
             </select>
             <input
               type="number"
-              className="w-[64px] rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
+              className="w-[64px] rounded-lg border border-hairline-strong bg-soft px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
               placeholder="min $"
               value={state.netMin ?? ""}
               onChange={(e) => onChange({ netMin: e.target.value === "" ? null : Number(e.target.value) })}
@@ -458,7 +458,7 @@ export default function FilterBar({
             <span className="text-xs text-fg-muted">–</span>
             <input
               type="number"
-              className="w-[64px] rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
+              className="w-[64px] rounded-lg border border-hairline-strong bg-soft px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
               placeholder="max $"
               value={state.netMax ?? ""}
               onChange={(e) => onChange({ netMax: e.target.value === "" ? null : Number(e.target.value) })}
@@ -472,7 +472,7 @@ export default function FilterBar({
             <span className="text-xs font-medium text-fg-muted">Dist (pts)</span>
             <input
               type="number"
-              className="w-[60px] rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
+              className="w-[60px] rounded-lg border border-hairline-strong bg-soft px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
               placeholder="min"
               value={state.distMin ?? ""}
               onChange={(e) => onChange({ distMin: e.target.value === "" ? null : Number(e.target.value) })}
@@ -480,7 +480,7 @@ export default function FilterBar({
             <span className="text-xs text-fg-muted">–</span>
             <input
               type="number"
-              className="w-[60px] rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
+              className="w-[60px] rounded-lg border border-hairline-strong bg-soft px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
               placeholder="max"
               value={state.distMax ?? ""}
               onChange={(e) => onChange({ distMax: e.target.value === "" ? null : Number(e.target.value) })}
@@ -495,7 +495,7 @@ export default function FilterBar({
             value={state.sortKey}
             onChange={(e) => onChange({ sortKey: e.target.value as SortKey })}
             aria-label="Sort by"
-            className="rounded-md border border-hairline bg-surface px-2 py-1.5 text-xs text-fg focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
+            className="rounded-lg border border-hairline-strong bg-soft px-2 py-1.5 text-xs text-fg focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
           >
             {sortOptions.map(([k, label]) => (
               <option key={k} value={k}>
@@ -508,7 +508,7 @@ export default function FilterBar({
             onClick={() => onChange({ sortAsc: !state.sortAsc })}
             aria-label={state.sortAsc ? "Sorted ascending" : "Sorted descending"}
             title={state.sortAsc ? "Ascending" : "Descending"}
-            className="rounded-md border border-hairline bg-surface px-1.5 py-1.5 text-fg-muted transition hover:bg-surface-hover hover:text-fg"
+            className="rounded-lg border border-hairline-strong bg-soft px-1.5 py-1.5 text-fg-muted transition hover:bg-surface-hover hover:text-fg"
           >
             {state.sortAsc ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />}
           </button>
@@ -530,7 +530,7 @@ export default function FilterBar({
                 distMax: null,
               })
             }
-            className="ml-auto rounded-md border border-hairline bg-surface px-2.5 py-1.5 text-xs text-fg-muted transition hover:border-danger/40 hover:text-danger"
+            className="ml-auto rounded-lg border border-hairline-strong bg-soft px-2.5 py-1.5 text-xs text-fg-muted transition hover:border-danger/40 hover:text-danger"
           >
             Reset
           </button>

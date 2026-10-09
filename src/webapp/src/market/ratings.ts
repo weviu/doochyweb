@@ -1,19 +1,18 @@
-// Rating / signal presentation metadata for the Analysis page. Kept as explicit
-// hex values rather than Tailwind classes because the SVG dial and sparkline
-// need them as fill/stroke attributes, and the gauge's coloured zones must line
-// up exactly with the rating colours used elsewhere in the UI.
-//
-// Ratings come from the server's rating engine (see src/server/market/analysis).
+// Rating / signal presentation metadata for the Analysis page. The five-step
+// scale and its hexes are the ones from the standalone Gauge project, kept as
+// explicit values rather than Tailwind classes because the SVG dial and
+// sparkline need them as fill/stroke attributes, and the dial's coloured zones
+// must line up exactly with the rating colours used elsewhere in the UI.
 
 export type Rating = "strong_sell" | "sell" | "neutral" | "buy" | "strong_buy";
 export type Signal = "buy" | "sell" | "neutral";
 
 export const RATINGS: Record<Rating, { label: string; color: string }> = {
-  strong_sell: { label: "Strong Sell", color: "#b82b30" },
-  sell: { label: "Sell", color: "#e5484d" },
-  neutral: { label: "Neutral", color: "#8a8a8a" },
-  buy: { label: "Buy", color: "#30a46c" },
-  strong_buy: { label: "Strong Buy", color: "#17734c" },
+  strong_sell: { label: "Strong Sell", color: "#dc2626" },
+  sell: { label: "Sell", color: "#f87171" },
+  neutral: { label: "Neutral", color: "#94a3b8" },
+  buy: { label: "Buy", color: "#34d399" },
+  strong_buy: { label: "Strong Buy", color: "#16a34a" },
 };
 
 export const SIGNALS: Record<Signal, string> = {

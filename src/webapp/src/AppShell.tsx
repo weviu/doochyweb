@@ -8,13 +8,15 @@ import { Button } from "./components/ui";
 // inside it, so switching between them never remounts the chrome.
 //
 // The header used to live inside Dashboard; it was lifted here so a second
-// top-level view could share it.
+// top-level view could share it. Styling follows the standalone Gauge project:
+// sticky translucent topbar, a segmented control for the primary nav, and the
+// 1600px page measure.
 
 export type ViewKey = "trading" | "analysis";
 
 const NAV: { key: ViewKey; label: string }[] = [
-  { key: "trading", label: "Trading" },
   { key: "analysis", label: "Analysis" },
+  { key: "trading", label: "Trading" },
 ];
 
 export function AppShell({
@@ -35,28 +37,42 @@ export function AppShell({
   children: ReactNode;
 }) {
   return (
-    <div className="min-h-screen bg-canvas text-fg">
-      <header className="sticky top-0 z-30 border-b border-hairline bg-canvas/90 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-7xl items-center gap-4 px-4 sm:px-6 lg:px-8">
-          <div className="shrink-0 text-base font-semibold tracking-tight">DoochyWeb</div>
+    <div className="min-h-screen bg-transparent text-fg">
+      <header className="sticky top-0 z-30 border-b border-hairline bg-canvas/80 backdrop-blur-xl">
+        <div className="mx-auto flex h-16 max-w-page items-center gap-5 px-4 sm:px-6">
+          <div className="flex shrink-0 items-center gap-2.5">
+            <GaugeMark />
+            <div className="leading-tight">
+              <div className="text-[17px] font-bold tracking-tight text-fg">DoochyWeb</div>
+              <div className="hidden text-[11px] text-fg-muted sm:block">
+                Market analysis &amp; trading
+              </div>
+            </div>
+          </div>
 
-          <nav className="flex min-w-0 flex-1 items-center gap-1" aria-label="Primary">
-            {NAV.map((n) => (
-              <button
-                key={n.key}
-                type="button"
-                onClick={() => onViewChange(n.key)}
-                aria-current={view === n.key ? "page" : undefined}
-                className={
-                  "rounded-md px-3 py-1.5 text-sm font-medium transition " +
-                  (view === n.key
-                    ? "bg-surface-hover text-fg"
-                    : "text-fg-muted hover:bg-surface-hover hover:text-fg")
-                }
-              >
-                {n.label}
-              </button>
-            ))}
+          <nav
+            className="flex min-w-0 flex-1 items-center gap-0.5 rounded-lg border border-hairline bg-soft p-[3px]"
+            aria-label="Primary"
+          >
+            {NAV.map((n) => {
+              const active = view === n.key;
+              return (
+                <button
+                  key={n.key}
+                  type="button"
+                  onClick={() => onViewChange(n.key)}
+                  aria-current={active ? "page" : undefined}
+                  className={
+                    "rounded-md px-3 py-1.5 text-[13px] transition duration-150 " +
+                    (active
+                      ? "bg-accent font-semibold text-accent-fg"
+                      : "font-medium text-fg-muted hover:text-fg")
+                  }
+                >
+                  {n.label}
+                </button>
+              );
+            })}
           </nav>
 
           <div className="flex shrink-0 items-center gap-1">
@@ -92,8 +108,31 @@ export function AppShell({
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">{children}</main>
+      <main className="mx-auto max-w-page px-4 py-5 sm:px-6">{children}</main>
     </div>
+  );
+}
+
+// Gauge's dial mark, kept as the app logo so the branding matches the project
+// the Analysis page came from.
+function GaugeMark() {
+  return (
+    <span className="grid h-8 w-8 shrink-0 place-items-center" aria-hidden="true">
+      <svg viewBox="0 0 32 32" width="30" height="30">
+        <circle cx="16" cy="16" r="15" fill="#14b8a6" />
+        <path d="M7 20a9 9 0 0 1 18 0" stroke="#e7edf5" strokeWidth="2.5" fill="none" />
+        <line
+          x1="16"
+          y1="20"
+          x2="21.5"
+          y2="11"
+          stroke="#e7edf5"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+        />
+        <circle cx="16" cy="20" r="1.8" fill="#e7edf5" />
+      </svg>
+    </span>
   );
 }
 

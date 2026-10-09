@@ -189,7 +189,7 @@ export default function OrdersTab({
         </div>
       ) : sortedOrders.length === 0 ? (
         <FadeRise>
-          <Card flat className="p-8 text-center">
+          <Card className="p-8 text-center">
             <div className="text-sm text-fg-muted">
               {rows.length > 0 ? "No pending orders match." : "No pending orders."}
             </div>
@@ -402,7 +402,7 @@ function BareFields({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      className="w-full rounded-md border border-hairline bg-surface px-3 py-2 text-sm tabular-nums text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
+      className="w-full rounded-lg border border-hairline-strong bg-soft px-3 py-2 text-sm tabular-nums text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
     />
   );
 }

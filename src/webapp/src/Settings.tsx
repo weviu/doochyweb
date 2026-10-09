@@ -76,7 +76,7 @@ export default function SettingsPage({
   }
 
   return (
-    <div className="min-h-screen bg-canvas text-fg">
+    <div className="min-h-screen bg-canvas/80 text-fg backdrop-blur-xl">
       <header className="sticky top-0 z-20 border-b border-hairline bg-canvas/85 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-4xl items-center gap-1 px-4">
           <Button

@@ -1,22 +1,22 @@
 import { Check, ChevronDown, Loader2 } from "lucide-react";
 import { useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 
-// Shared "Dark Notion" primitives, ported from the doochy webapp so both UIs
-// share the same feel: hairlines over heavy borders, background-step hover
-// (never scale/lift), one restrained accent, 200ms transitions, and a >=400ms
-// loading floor on every async button so fast round-trips never flicker.
+// Shared primitives, ported from the standalone Gauge project's stylesheet:
+// blue-slate surfaces, one restrained teal accent, 10px controls, solid
+// borders, and a >=400ms loading floor on every async button so fast
+// round-trips never flicker.
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
 type Size = "sm" | "md" | "lg";
 
 const base =
-  "inline-flex items-center justify-center gap-2 rounded-md font-medium transition " +
+  "inline-flex items-center justify-center gap-2 rounded-lg font-semibold transition duration-150 " +
   "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-1 " +
   "focus-visible:ring-offset-canvas disabled:opacity-50 disabled:pointer-events-none select-none";
 
 const variants: Record<Variant, string> = {
   primary: "bg-accent text-accent-fg hover:bg-accent-hover",
-  secondary: "bg-surface border border-hairline text-fg hover:bg-surface-hover hover:border-hairline-strong",
+  secondary: "bg-soft border border-hairline-strong text-fg hover:bg-surface-hover",
   ghost: "text-fg-muted hover:bg-surface-hover hover:text-fg",
   danger: "text-danger hover:bg-danger-soft",
 };
@@ -100,9 +100,11 @@ export function Card({
   return (
     <div
       className={
-        "rounded-lg border border-hairline bg-surface " +
+        "rounded-2xl border border-hairline bg-gradient-to-b from-surface-hover to-surface " +
         (flat ? "" : "shadow-card ") +
-        (interactive ? "transition hover:bg-surface-hover hover:border-hairline-strong cursor-pointer " : "") +
+        (interactive
+          ? "cursor-pointer transition duration-150 hover:-translate-y-0.5 hover:border-hairline-strong hover:shadow-card-hover "
+          : "") +
         className
       }
     >
@@ -123,10 +125,10 @@ export function Badge({
   tone?: "muted" | "success" | "danger" | "accent";
 }) {
   const tones: Record<string, string> = {
-    muted: "border-hairline bg-surface text-fg-muted",
+    muted: "border-hairline-strong bg-soft text-fg-muted",
     success: "border-success/30 bg-success-soft text-success",
     danger: "border-danger/30 bg-danger-soft text-danger",
-    accent: "border-accent/20 bg-accent-soft text-accent",
+    accent: "border-accent/30 bg-accent-soft text-accent",
   };
   return (
     <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium ${tones[tone]}`}>
@@ -135,10 +137,12 @@ export function Badge({
   );
 }
 
-// Shared input styling for every text/number field in the app.
+// Shared input styling for every text/number field in the app. Recessed
+// background (darker than a card) with a teal focus ring, matching gauge's
+// form controls.
 export const inputCls =
-  "w-full rounded-md border border-hairline bg-surface px-3 py-2 text-sm text-fg " +
-  "placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40 " +
+  "w-full rounded-lg border border-hairline-strong bg-soft px-3 py-2 text-sm text-fg " +
+  "placeholder:text-fg-faint focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/40 " +
   "disabled:opacity-50 disabled:pointer-events-none";
 
 // Account color palette, used to visually separate accounts (settings swatches
@@ -258,7 +262,7 @@ export function Chip({
 }) {
   if (!onRemove) {
     return (
-      <span className="inline-flex items-center gap-1 rounded-md border border-hairline bg-surface px-2 py-1 text-xs font-medium text-fg-muted">
+      <span className="inline-flex items-center gap-1 rounded-lg border border-hairline-strong bg-soft px-2 py-1 text-xs font-medium text-fg-muted">
         {children}
       </span>
     );
@@ -267,7 +271,7 @@ export function Chip({
     <button
       type="button"
       onClick={onRemove}
-      className="inline-flex items-center gap-1 rounded-md border border-hairline bg-surface px-2 py-1 text-xs font-medium text-fg-muted transition hover:border-danger/40 hover:text-danger"
+      className="inline-flex items-center gap-1 rounded-lg border border-hairline-strong bg-soft px-2 py-1 text-xs font-medium text-fg-muted transition hover:border-danger/40 hover:text-danger"
     >
       {children}
       <span className="text-fg-faint">×</span>

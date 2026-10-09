@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Plus, RefreshCw, Settings2 } from "lucide-react";
+import { AlertTriangle, RefreshCw, Settings2 } from "lucide-react";
 
 import { marketApi } from "../api";
 import { FadeRise } from "../components/motion";
@@ -7,6 +7,7 @@ import { Card } from "../components/ui";
 import { MarketCard, MarketCardError, MarketCardSkeleton } from "./MarketCard";
 import { MarketDetail } from "./MarketDetail";
 import { MarketSettingsSheet } from "./MarketSettingsSheet";
+import { SymbolSearch } from "./SymbolSearch";
 import { DEFAULT_TIMEFRAME, timeframes as staticTimeframes } from "./timeframes";
 import type { CatalogEntry, MarketResult, MarketSettings } from "./types";
 
@@ -27,7 +28,6 @@ export default function AnalysisPage() {
 
   const [detail, setDetail] = useState<{ symbol: string; timeframe: string } | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [symbolInput, setSymbolInput] = useState("");
 
   const timeframes = config?.timeframes ?? staticTimeframes;
   const settings = config?.settings;
@@ -90,7 +90,6 @@ export default function AnalysisPage() {
     async (raw: string) => {
       const symbol = raw.trim();
       if (!symbol) return;
-      setSymbolInput("");
       try {
         await marketApi.addSymbol(symbol);
         await load();
@@ -154,7 +153,7 @@ export default function AnalysisPage() {
     <FadeRise>
       <div className="space-y-3">
         {/* Toolbar: timeframes + add market + refresh + settings */}
-        <Card flat className="flex flex-col gap-2.5 p-3">
+        <Card className="flex flex-col gap-2.5 p-3">
           <div className="flex flex-wrap items-center gap-1">
             {timeframes.map((t) => (
               <button
@@ -173,38 +172,7 @@ export default function AnalysisPage() {
             ))}
           </div>
 
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void addSymbol(symbolInput);
-            }}
-            className="flex gap-2"
-          >
-            <input
-              list="market-suggestions"
-              autoComplete="off"
-              spellCheck={false}
-              value={symbolInput}
-              onChange={(e) => setSymbolInput(e.target.value)}
-              placeholder="Add market — XAUUSD, BTC, NAS100, AAPL…"
-              aria-label="Add market"
-              className="w-full rounded-md border border-hairline bg-surface px-3 py-1.5 text-sm text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
-            />
-            <datalist id="market-suggestions">
-              {(config?.catalog ?? []).map((c) => (
-                <option key={c.symbol} value={c.symbol}>
-                  {c.name} ({c.type})
-                </option>
-              ))}
-            </datalist>
-            <button
-              type="submit"
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-fg transition hover:bg-accent-hover"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Add
-            </button>
-          </form>
+          <SymbolSearch catalog={config?.catalog ?? []} onAdd={(s) => void addSymbol(s)} />
         </Card>
 
         <StatusLine
@@ -218,16 +186,16 @@ export default function AnalysisPage() {
         />
 
         {degraded > 0 && (
-          <Card flat className="flex items-start gap-2 border-amber-500/30 bg-amber-500/10 p-2.5 text-xs leading-relaxed text-fg-muted">
+          <div className="flex items-start gap-3 rounded-2xl border border-accent/25 bg-gradient-to-r from-accent/12 to-blue-500/8 p-3.5 text-[13px] leading-relaxed text-fg-muted">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
             <span>
               {degraded} market{degraded === 1 ? "" : "s"} showing{" "}
               <strong className="text-fg">simulated</strong> data because every real source
               failed or is temporarily disabled. Set{" "}
-              <code className="text-fg">TWELVEDATA_API_KEY</code> in the server environment to get
-              real forex, metals, index and stock prices.
+              <code className="text-accent">TWELVEDATA_API_KEY</code> in the server environment to
+              get real forex, metals, index and stock prices.
             </span>
-          </Card>
+          </div>
         )}
 
         {error && (
@@ -237,18 +205,18 @@ export default function AnalysisPage() {
         )}
 
         {loading && results.length === 0 ? (
-          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(290px,1fr))]">
             {Array.from({ length: 10 }, (_, i) => (
               <MarketCardSkeleton key={i} />
             ))}
           </div>
         ) : results.length === 0 ? (
-          <Card flat className="p-8 text-center">
+          <Card className="p-8 text-center">
             <div className="text-sm text-fg-muted">Your watchlist is empty.</div>
             <div className="mt-1 text-xs text-fg-faint">Add a market above to start analysing.</div>
           </Card>
         ) : (
-          <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(290px,1fr))]">
             {results.map((r) =>
               r.ok ? (
                 <MarketCard

@@ -210,7 +210,7 @@ export default function PositionsTab({
         </div>
       ) : sorted.length === 0 ? (
         <FadeRise>
-          <Card flat className="p-8 text-center">
+          <Card className="p-8 text-center">
             <div className="text-sm text-fg-muted">{rows.length > 0 ? "No positions match." : "No open positions."}</div>
           </Card>
         </FadeRise>

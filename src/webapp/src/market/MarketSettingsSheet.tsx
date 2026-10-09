@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { AlertCircle, Save } from "lucide-react";
 
 import { AnimatedModal } from "../components/Modal";
-import { Button, Card, Flash, inputCls } from "../components/ui";
+import { Button, Flash, inputCls } from "../components/ui";
 import { marketApi } from "../api";
 import { timeframes } from "./timeframes";
 import type { MarketSettings } from "./types";
@@ -51,17 +51,15 @@ export function MarketSettingsSheet({
         {saved && !error && <Flash tone="success">Settings saved</Flash>}
 
         {!settings.twelvedataKeySet && (
-          <Card flat className="border-amber-500/30 bg-amber-500/10 p-3">
-            <div className="flex gap-2 text-xs leading-relaxed text-fg-muted">
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-              <span>
-                No Twelve Data key is configured, so forex, metals, indices and stocks fall back to
-                Yahoo/Stooq and then to a clearly-labelled simulator. Crypto is always live via
-                Binance. Set <code className="text-fg">TWELVEDATA_API_KEY</code> in the server
-                environment to enable every asset class.
-              </span>
-            </div>
-          </Card>
+          <div className="flex gap-2.5 rounded-xl border border-accent/25 bg-gradient-to-r from-accent/12 to-blue-500/8 p-3 text-xs leading-relaxed text-fg-muted">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
+            <span>
+              No Twelve Data key is configured, so forex, metals, indices and stocks fall back to
+              Yahoo/Stooq and then to a clearly-labelled simulator. Crypto is always live via
+              Binance. Set <code className="text-accent">TWELVEDATA_API_KEY</code> in the server
+              environment to enable every asset class.
+            </span>
+          </div>
         )}
 
         <div className="space-y-1.5">

@@ -13,6 +13,7 @@ export function AnimatedModal({
   title,
   subtitle,
   size = "sm",
+  actions,
   children,
 }: {
   open: boolean;
@@ -22,6 +23,8 @@ export function AnimatedModal({
   // "sm" is the default compact sheet; "lg" is for dense content such as the
   // Analysis detail tables, which do not fit the narrow column.
   size?: "sm" | "lg";
+  // Controls rendered in the header, between the title and the close button.
+  actions?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -29,17 +32,17 @@ export function AnimatedModal({
       {open && (
         <motion.div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          role="dialog"
-          aria-modal="true"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.25 }}
         >
-          <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
           <motion.div
+            role="dialog"
+            aria-modal="true"
             className={
-              "relative max-h-[88vh] w-full overflow-y-auto rounded-lg border border-hairline bg-surface p-6 shadow-overlay " +
+              "relative max-h-[88vh] w-full overflow-y-auto rounded-3xl border border-hairline-strong bg-gradient-to-b from-surface-hover to-surface p-6 shadow-overlay " +
               (size === "lg" ? "max-w-3xl" : "max-w-md")
             }
             initial={{ opacity: 0, y: 12 }}
@@ -52,14 +55,17 @@ export function AnimatedModal({
                 <div className="text-lg font-semibold tracking-tight">{title}</div>
                 {subtitle && <div className="mt-0.5 text-xs text-fg-faint">{subtitle}</div>}
               </div>
-              <button
-                type="button"
-                onClick={onClose}
-                aria-label="Close"
-                className="-mr-1 shrink-0 rounded-md p-1 text-fg-muted transition hover:bg-surface-hover hover:text-fg"
-              >
-                <X className="h-4 w-4" />
-              </button>
+              <div className="flex shrink-0 items-center gap-1">
+                {actions}
+                <button
+                  type="button"
+                  onClick={onClose}
+                  aria-label="Close"
+                  className="rounded-md p-1 text-fg-muted transition hover:bg-surface-hover hover:text-fg"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
             </div>
             {children}
           </motion.div>
@@ -91,16 +97,16 @@ export function ConfirmModal({
       {open && (
         <motion.div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          role="dialog"
-          aria-modal="true"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.25 }}
         >
-          <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
           <motion.div
-            className="relative w-full max-w-sm rounded-lg border border-hairline bg-surface p-6 shadow-overlay"
+            role="dialog"
+            aria-modal="true"
+            className="relative w-full max-w-sm rounded-3xl border border-hairline-strong bg-gradient-to-b from-surface-hover to-surface p-6 shadow-overlay"
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 12 }}

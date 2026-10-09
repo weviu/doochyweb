@@ -218,7 +218,7 @@ export default function OrderTicket({
                   }}
                   onFocus={() => setSymOpen(true)}
                   onKeyDown={onSymKey}
-                  className="w-full appearance-none rounded-md border border-hairline bg-surface py-2 pl-9 pr-3 text-sm font-semibold tracking-tight text-fg placeholder:font-normal placeholder:tracking-normal placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
+                  className="w-full appearance-none rounded-lg border border-hairline-strong bg-soft py-2 pl-9 pr-3 text-sm font-semibold tracking-tight text-fg placeholder:font-normal placeholder:tracking-normal placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
                 />
               </div>
               {symOpen && (

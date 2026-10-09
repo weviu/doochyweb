@@ -44,7 +44,7 @@ export default function Dashboard({ accounts }: { accounts: AccountView[] }) {
   return (
     <FadeRise>
       <div className="space-y-5">
-        <Card flat className="p-4">
+        <Card className="p-4">
           <div className="flex items-center gap-3">
             <div className="flex flex-1 flex-wrap items-center gap-x-3 gap-y-2">
               <span className="text-sm font-medium text-fg-muted">Account</span>
@@ -54,7 +54,7 @@ export default function Dashboard({ accounts }: { accounts: AccountView[] }) {
                   value={mode === "combined" ? "" : selectedCtid ?? ""}
                   disabled={mode === "combined"}
                   onChange={(e) => setSelectedCtid(Number(e.target.value))}
-                  className="w-full appearance-none rounded-md border border-hairline bg-surface py-2 pl-3 pr-8 text-sm font-medium text-fg focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-50"
+                  className="w-full appearance-none rounded-lg border border-hairline-strong bg-soft py-2 pl-3 pr-8 text-sm font-medium text-fg focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-50"
                 >
                   {mode === "combined" && <option value="">All accounts</option>}
                   {liveAccounts.length > 0 && (
@@ -95,7 +95,7 @@ export default function Dashboard({ accounts }: { accounts: AccountView[] }) {
         {(mode === "combined" && accounts.length > 0) || selected ? (
           <Tabs mode={mode} accounts={accounts} ctid={selected?.ctid ?? null} isLive={selected?.isLive ?? false} />
         ) : (
-          <Card flat className="p-8 text-center">
+          <Card className="p-8 text-center">
             <div className="text-sm text-fg-muted">No cTrader accounts found.</div>
             <div className="mt-1 text-xs text-fg-faint">Check your credentials.</div>
           </Card>

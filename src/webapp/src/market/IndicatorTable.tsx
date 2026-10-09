@@ -54,7 +54,7 @@ export function VoteBars({ section }: { section: { buy: number; sell: number; ne
     <div className="flex gap-0.5 overflow-hidden rounded-full">
       {seg(section.buy, ratingColor("buy"))}
       {seg(section.sell, ratingColor("sell"))}
-      {seg(section.neutral, "#4a4a4a")}
+      {seg(section.neutral, "#334155")}
     </div>
   );
 }

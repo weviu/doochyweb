@@ -29,7 +29,7 @@ const YAHOO_METAL: Record<string, string | null> = {
 // Base asset -> Binance spot symbol. Only real, liquid pairs.
 const BINANCE: Record<string, string> = {
   BTC: "BTCUSDT", ETH: "ETHUSDT", BNB: "BNBUSDT", SOL: "SOLUSDT",
-  XRP: "XRPUSDT", ADA: "ADAUSDT", DOGE: "DOGEUSDT", AVAX: "AVAXUSDT",
+  XRP: "XRPUSDT", ADA: "ADAUSDT", AVAX: "AVAXUSDT",
   DOT: "DOTUSDT", LINK: "LINKUSDT", LTC: "LTCUSDT", BCH: "BCHUSDT",
   XLM: "XLMUSDT", TRX: "TRXUSDT", TON: "TONUSDT", SHIB: "SHIBUSDT",
   ATOM: "ATOMUSDT", UNI: "UNIUSDT", NEAR: "NEARUSDT", APT: "APTUSDT",
@@ -98,7 +98,7 @@ const FOREX_NAMES: Record<string, string> = {
 const STOCKS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META", "AMD", "NFLX", "COIN", "MSTR"];
 
 const POPULAR_CRYPTO = [
-  "BTC", "ETH", "SOL", "XRP", "BNB", "ADA", "DOGE", "AVAX", "LINK", "DOT",
+  "BTC", "ETH", "SOL", "XRP", "BNB", "ADA", "AVAX", "LINK", "DOT",
   "LTC", "BCH", "TON",
 ];
 

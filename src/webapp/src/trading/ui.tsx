@@ -30,7 +30,7 @@ export function Seg({
   tone?: boolean;
 }) {
   return (
-    <div className="grid grid-flow-col auto-cols-fr gap-0.5 rounded-md border border-hairline bg-surface p-0.5">
+    <div className="grid grid-flow-col auto-cols-fr gap-0.5 rounded-lg border border-hairline-strong bg-soft p-0.5">
       {options.map((o) => {
         const on = value === o.value;
         let cls =

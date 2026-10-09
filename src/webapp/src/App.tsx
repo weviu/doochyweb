@@ -52,7 +52,7 @@ export default function App() {
 // Credential entry and settings are full-screen takeovers that sit outside the
 // shell, so they are routed here rather than inside either view.
 function AuthedApp({ onLogout }: { onLogout: () => void }) {
-  const [view, setView] = useState<ViewKey>("trading");
+  const [view, setView] = useState<ViewKey>("analysis");
   const [showSettings, setShowSettings] = useState(false);
   const { accounts, setAccounts, hasCredentials, load, refreshBalances, connect } = useAccounts();
 

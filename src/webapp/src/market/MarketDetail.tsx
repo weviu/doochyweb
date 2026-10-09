@@ -68,6 +68,32 @@ export function MarketDetail({
       onClose={onClose}
       size="lg"
       title={symbol}
+      actions={
+        <>
+          <button
+            type="button"
+            onClick={() => setSeq((n) => n + 1)}
+            disabled={busy}
+            aria-label="Refresh analysis"
+            title="Refresh this analysis"
+            className="rounded-md p-1.5 text-fg-muted transition duration-150 hover:bg-surface-hover hover:text-fg disabled:opacity-50"
+          >
+            <RefreshCw className={"h-4 w-4 " + (busy ? "animate-spin" : "")} />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onRemove(symbol);
+              onClose();
+            }}
+            aria-label={`Remove ${symbol} from watchlist`}
+            title="Remove from watchlist"
+            className="rounded-md p-1.5 text-fg-muted transition duration-150 hover:bg-danger-soft hover:text-danger"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </>
+      }
       subtitle={
         a ? (
           `${providerName(a.provider)}${a.simulated ? " · simulated" : ""}`
@@ -197,29 +223,6 @@ export function MarketDetail({
             </div>
           )
         )}
-      </div>
-
-      <div className="mt-5 flex items-center justify-between gap-2 border-t border-hairline pt-4">
-        <Button
-          variant="danger"
-          size="sm"
-          icon={<Trash2 className="h-4 w-4" />}
-          onClick={async () => {
-            onRemove(symbol);
-            onClose();
-          }}
-        >
-          Remove
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          icon={<RefreshCw className="h-4 w-4" />}
-          disabled={busy}
-          onClickAsync={async () => setSeq((n) => n + 1)}
-        >
-          Refresh
-        </Button>
       </div>
     </AnimatedModal>
   );

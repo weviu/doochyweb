@@ -3,3 +3,7 @@ dist/
 webapp/dist/
 .env
 *.log
+
+# Standalone reference checkout of the Gauge project (its own git repo).
+# The Analysis page in src/ is the ported, canonical implementation.
+/gauge/

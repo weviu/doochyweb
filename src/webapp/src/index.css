@@ -24,6 +24,12 @@
   /* Status */
   --success: 48 163 108;       /* #30a46c */
   --danger: 229 72 77;         /* #e5484d */
+
+  /* Analysis rating scale. Five steps from most bearish to most bullish:
+     strong_sell / sell / neutral / buy / strong_buy. The outer two are
+     dedicated vars so the five levels never collapse into three. */
+  --strong-sell: 184 43 48;    /* #b82b30 */
+  --strong-buy: 23 115 76;     /* #17734c */
 }
 
 html, body, #root {

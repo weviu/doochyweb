@@ -1,11 +1,9 @@
 import { useEffect, useState } from "react";
-import { ChevronDown, LogOut, RefreshCw, Settings } from "lucide-react";
-import { api, AccountView, ConnectInput } from "./api";
-import ConnectPanel from "./ConnectPanel";
-import SettingsPage from "./Settings";
+import { ChevronDown } from "lucide-react";
+import { AccountView } from "./api";
 import PositionsTab from "./PositionsTab";
 import OrdersTab from "./OrdersTab";
-import { Button, Card, Toggle } from "./components/ui";
+import { Card, Toggle } from "./components/ui";
 import { FadeRise } from "./components/motion";
 
 export type ViewMode = "separate" | "combined";
@@ -18,13 +16,11 @@ const PAGES = [
 
 type PageKey = (typeof PAGES)[number]["key"];
 
-export default function Dashboard({ onLogout }: { onLogout: () => void }) {
-  const [accounts, setAccounts] = useState<AccountView[]>([]);
-  const [hasCredentials, setHasCredentials] = useState<boolean | null>(null);
+// The trading view: account selector plus the positions / pending-orders tabs.
+// Chrome (header + primary nav) lives in AppShell; credential entry and
+// settings are full-screen takeovers owned by App.
+export default function Dashboard({ accounts }: { accounts: AccountView[] }) {
   const [selectedCtid, setSelectedCtid] = useState<number | null>(null);
-  const [showConnect, setShowConnect] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const [balanceLoading, setBalanceLoading] = useState(false);
   const [mode, setMode] = useState<ViewMode>(() =>
     localStorage.getItem(MODE_KEY) === "combined" ? "combined" : "separate"
   );
@@ -34,173 +30,78 @@ export default function Dashboard({ onLogout }: { onLogout: () => void }) {
     localStorage.setItem(MODE_KEY, next);
   }
 
+  // Default to the first live account once, when accounts first arrive.
   useEffect(() => {
-    let alive = true;
-    api
-      .me()
-      .then(({ hasCredentials, accounts }) => {
-        if (!alive) return;
-        setHasCredentials(hasCredentials);
-        setAccounts(accounts);
-        if (!selectedCtid && accounts.length > 0) {
-          const preferred = accounts.find((a) => a.isLive) ?? accounts[0];
-          setSelectedCtid(preferred.ctid);
-        }
-      })
-      .catch(() => setHasCredentials(false));
-    return () => {
-      alive = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function refreshBalances() {
-    setBalanceLoading(true);
-    try {
-      const { accounts: fresh } = await api.accounts();
-      setAccounts(fresh);
-    } finally {
-      setBalanceLoading(false);
-    }
-  }
-
-  async function handleConnected(creds: ConnectInput) {
-    const { accounts: fresh } = await api.connect(creds);
-    setHasCredentials(true);
-    setShowConnect(false);
-    const preferred = fresh.find((a) => a.isLive) ?? fresh[0];
-    setAccounts(fresh);
-    if (preferred) setSelectedCtid(preferred.ctid);
-    refreshBalances();
-  }
+    if (selectedCtid || accounts.length === 0) return;
+    const preferred = accounts.find((a) => a.isLive) ?? accounts[0];
+    setSelectedCtid(preferred.ctid);
+  }, [accounts, selectedCtid]);
 
   const selected = accounts.find((a) => a.ctid === selectedCtid) ?? null;
   const demoAccounts = accounts.filter((a) => !a.isLive);
   const liveAccounts = accounts.filter((a) => a.isLive);
 
-  if (hasCredentials === null) {
-    return (
-      <div className="flex min-h-screen items-center justify-center p-6">
-        <div className="w-full max-w-sm space-y-3">
-          <div className="h-32 w-full animate-pulse rounded-lg bg-surface-hover" />
-          <div className="h-10 w-full animate-pulse rounded-lg bg-surface-hover" />
-        </div>
-      </div>
-    );
-  }
-
-  if (showSettings) {
-    return (
-      <SettingsPage
-        accounts={accounts}
-        onAccountsChanged={setAccounts}
-        onConnected={handleConnected}
-        onClose={() => setShowSettings(false)}
-      />
-    );
-  }
-
-  if (showConnect) {
-    return (
-      <ConnectPanel
-        onConnected={handleConnected}
-        onCancel={hasCredentials ? () => setShowConnect(false) : undefined}
-      />
-    );
-  }
-
-  if (!hasCredentials) {
-    return <ConnectPanel onConnected={handleConnected} />;
-  }
-
   return (
-    <div className="min-h-screen bg-canvas">
-      <header className="sticky top-0 z-10 border-b border-hairline bg-canvas">
-        <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
-          <div className="text-base font-semibold tracking-tight">DoochyWeb</div>
-          <div className="flex items-center gap-1">
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={<RefreshCw className="h-4 w-4" />}
-              onClickAsync={refreshBalances}
-              aria-label="Refresh balances"
-              title="Refresh balances"
-            />
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={<Settings className="h-4 w-4" />}
-              onClick={() => setShowSettings(true)}
-              aria-label="Settings"
-              title="Settings"
-            />
-            <Button size="sm" variant="ghost" icon={<LogOut className="h-4 w-4" />} onClick={onLogout} aria-label="Sign out" title="Sign out">
-              Sign out
-            </Button>
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
-        <FadeRise>
-          <div className="space-y-6">
-            <Card className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="flex flex-1 flex-wrap items-center gap-x-3 gap-y-2">
-                  <span className="text-sm font-medium text-fg-muted">Account</span>
-                  <div className="relative min-w-0 flex-1">
-                    <select
-                      id="account-select"
-                      value={mode === "combined" ? "" : selectedCtid ?? ""}
-                      disabled={mode === "combined"}
-                      onChange={(e) => setSelectedCtid(Number(e.target.value))}
-                      className="w-full appearance-none rounded-md border border-hairline bg-surface py-2 pl-3 pr-8 text-sm font-medium text-fg focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-50"
-                    >
-                      {mode === "combined" && <option value="">All accounts</option>}
-                      {liveAccounts.length > 0 && (
-                        <option value="__live" disabled>
-                          Live
-                        </option>
-                      )}
-                      {liveAccounts.map((a) => (
-                        <option key={a.ctid} value={a.ctid}>
-                          {(a.nickname?.trim() || a.login)} · {a.broker}
-                          {a.balance != null ? ` · ${fmtMoney(a.balance)} ${a.currency ?? ""}` : ""}
-                        </option>
-                      ))}
-                      {demoAccounts.length > 0 && (
-                        <option value="__demo" disabled>
-                          Demo
-                        </option>
-                      )}
-                      {demoAccounts.map((a) => (
-                        <option key={a.ctid} value={a.ctid}>
-                          {(a.nickname?.trim() || a.login)} · {a.broker}
-                          {a.balance != null ? ` · ${fmtMoney(a.balance)} ${a.currency ?? ""}` : ""}
-                        </option>
-                      ))}
-                      {accounts.length === 0 && <option value="">No accounts</option>}
-                    </select>
-                    <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-muted" />
-                  </div>
-                </div>
-                <Toggle label="Combined" checked={mode === "combined"} onToggle={(c) => switchMode(c ? "combined" : "separate")} />
+    <FadeRise>
+      <div className="space-y-5">
+        <Card flat className="p-4">
+          <div className="flex items-center gap-3">
+            <div className="flex flex-1 flex-wrap items-center gap-x-3 gap-y-2">
+              <span className="text-sm font-medium text-fg-muted">Account</span>
+              <div className="relative min-w-0 flex-1">
+                <select
+                  id="account-select"
+                  value={mode === "combined" ? "" : selectedCtid ?? ""}
+                  disabled={mode === "combined"}
+                  onChange={(e) => setSelectedCtid(Number(e.target.value))}
+                  className="w-full appearance-none rounded-md border border-hairline bg-surface py-2 pl-3 pr-8 text-sm font-medium text-fg focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-50"
+                >
+                  {mode === "combined" && <option value="">All accounts</option>}
+                  {liveAccounts.length > 0 && (
+                    <option value="__live" disabled>
+                      Live
+                    </option>
+                  )}
+                  {liveAccounts.map((a) => (
+                    <option key={a.ctid} value={a.ctid}>
+                      {(a.nickname?.trim() || a.login)} · {a.broker}
+                      {a.balance != null ? ` · ${fmtMoney(a.balance)} ${a.currency ?? ""}` : ""}
+                    </option>
+                  ))}
+                  {demoAccounts.length > 0 && (
+                    <option value="__demo" disabled>
+                      Demo
+                    </option>
+                  )}
+                  {demoAccounts.map((a) => (
+                    <option key={a.ctid} value={a.ctid}>
+                      {(a.nickname?.trim() || a.login)} · {a.broker}
+                      {a.balance != null ? ` · ${fmtMoney(a.balance)} ${a.currency ?? ""}` : ""}
+                    </option>
+                  ))}
+                  {accounts.length === 0 && <option value="">No accounts</option>}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-muted" />
               </div>
-            </Card>
-
-            {(mode === "combined" && accounts.length > 0) || selected ? (
-              <Tabs mode={mode} accounts={accounts} ctid={selected?.ctid ?? null} isLive={selected?.isLive ?? false} />
-            ) : (
-              <Card className="p-8 text-center">
-                <div className="text-sm text-fg-muted">No cTrader accounts found.</div>
-                <div className="mt-1 text-xs text-fg-faint">Check your credentials.</div>
-              </Card>
-            )}
+            </div>
+            <Toggle
+              label="Combined"
+              checked={mode === "combined"}
+              onToggle={(c) => switchMode(c ? "combined" : "separate")}
+            />
           </div>
-        </FadeRise>
-      </main>
-    </div>
+        </Card>
+
+        {(mode === "combined" && accounts.length > 0) || selected ? (
+          <Tabs mode={mode} accounts={accounts} ctid={selected?.ctid ?? null} isLive={selected?.isLive ?? false} />
+        ) : (
+          <Card flat className="p-8 text-center">
+            <div className="text-sm text-fg-muted">No cTrader accounts found.</div>
+            <div className="mt-1 text-xs text-fg-faint">Check your credentials.</div>
+          </Card>
+        )}
+      </div>
+    </FadeRise>
   );
 }
 

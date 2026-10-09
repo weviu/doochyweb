@@ -12,12 +12,16 @@ export function AnimatedModal({
   onClose,
   title,
   subtitle,
+  size = "sm",
   children,
 }: {
   open: boolean;
   onClose: () => void;
   title: ReactNode;
   subtitle?: ReactNode;
+  // "sm" is the default compact sheet; "lg" is for dense content such as the
+  // Analysis detail tables, which do not fit the narrow column.
+  size?: "sm" | "lg";
   children: ReactNode;
 }) {
   return (
@@ -25,6 +29,8 @@ export function AnimatedModal({
       {open && (
         <motion.div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -32,7 +38,10 @@ export function AnimatedModal({
         >
           <div className="absolute inset-0 bg-black/60" onClick={onClose} />
           <motion.div
-            className="relative max-h-[88vh] w-full max-w-md overflow-y-auto rounded-lg border border-hairline bg-surface p-6 shadow-overlay"
+            className={
+              "relative max-h-[88vh] w-full overflow-y-auto rounded-lg border border-hairline bg-surface p-6 shadow-overlay " +
+              (size === "lg" ? "max-w-3xl" : "max-w-md")
+            }
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 12 }}
@@ -82,6 +91,8 @@ export function ConfirmModal({
       {open && (
         <motion.div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}

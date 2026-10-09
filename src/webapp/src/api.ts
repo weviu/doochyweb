@@ -136,6 +136,59 @@ export interface WriteResult {
   note?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Analysis (market technical analysis) — see src/server/market
+// ---------------------------------------------------------------------------
+
+export const marketApi = {
+  config: () =>
+    request<import("./market/types").MarketConfig>("/api/market/config"),
+
+  search: (q: string) =>
+    request<{ items: import("./market/types").CatalogEntry[] }>(
+      `/api/market/search?q=${encodeURIComponent(q)}`
+    ),
+
+  watchlist: () => request<{ symbols: string[] }>("/api/market/watchlist"),
+
+  addSymbol: (symbol: string) =>
+    request<{ symbols: string[] }>("/api/market/watchlist", { method: "POST", body: { symbol } }),
+
+  removeSymbol: (symbol: string) =>
+    request<{ symbols: string[] }>(`/api/market/watchlist?symbol=${encodeURIComponent(symbol)}`, {
+      method: "DELETE",
+    }),
+
+  analysis: (timeframe: string) =>
+    request<{
+      timeframe: string;
+      results: import("./market/types").MarketResult[];
+      updatedAt: number;
+    }>(`/api/market/analysis?timeframe=${encodeURIComponent(timeframe)}`),
+
+  detail: (symbol: string, timeframe: string, all: boolean) =>
+    request<import("./market/types").MarketResult>(
+      `/api/market/analysis/${encodeURIComponent(symbol)}` +
+        `?timeframe=${encodeURIComponent(timeframe)}${all ? "&all=1" : ""}`
+    ),
+
+  // Force-refresh one market, bypassing the server's candle cache.
+  refreshSymbol: (symbol: string, timeframe: string) =>
+    request<import("./market/types").MarketResult>(
+      `/api/market/analysis/${encodeURIComponent(symbol)}/refresh` +
+        `?timeframe=${encodeURIComponent(timeframe)}`,
+      { method: "POST" }
+    ),
+
+  settings: () => request<import("./market/types").MarketSettings>("/api/market/settings"),
+
+  saveSettings: (patch: Partial<import("./market/types").MarketSettings>) =>
+    request<import("./market/types").MarketSettings>("/api/market/settings", {
+      method: "POST",
+      body: patch,
+    }),
+};
+
 export const api = {
   register: (username: string, password: string) =>
     request<{ token: string }>("/api/auth/register", { method: "POST", body: { username, password } }),

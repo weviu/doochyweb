@@ -1,0 +1,99 @@
+// API types + calls for the Analysis page. Kept separate from ./api.ts because
+// the trading API and the market API have nothing in common beyond auth, and
+// mixing them would bloat the module every other screen imports.
+
+export type Rating = "strong_sell" | "sell" | "neutral" | "buy" | "strong_buy";
+export type Signal = "buy" | "sell" | "neutral";
+export type SymbolType = "forex" | "commodity" | "crypto" | "index" | "stock" | "unknown";
+
+export interface IndicatorRow {
+  name: string;
+  value: number | null;
+  signal: Signal;
+}
+
+export interface Section {
+  buy: number;
+  sell: number;
+  neutral: number;
+  rating: Rating;
+  rows: IndicatorRow[];
+}
+
+export interface ProviderWarning {
+  provider: string;
+  message: string;
+}
+
+export interface TimeframeRating {
+  rating?: Rating;
+  score?: number;
+  buy?: number;
+  sell?: number;
+  neutral?: number;
+  price?: number;
+  provider?: string;
+  simulated?: boolean;
+  error?: string;
+}
+
+export interface MarketAnalysis {
+  ok: true;
+  symbol: string;
+  name: string;
+  type: SymbolType;
+  timeframe: string;
+  price: number;
+  change: number;
+  changePct: number;
+  high: number;
+  low: number;
+  open: number;
+  previousClose: number;
+  atr: number | null;
+  candles: number;
+  summary: { buy: number; sell: number; neutral: number; score: number; rating: Rating };
+  oscillators: Section;
+  movingAverages: Section;
+  sparkline: number[];
+  series: { t: number; c: number }[];
+  updatedAt: number;
+  provider: string;
+  simulated: boolean;
+  proxy?: string;
+  cached: boolean;
+  warnings: ProviderWarning[];
+  meta: { note?: string };
+  timeframeRatings?: Record<string, TimeframeRating>;
+}
+
+export interface MarketAnalysisError {
+  ok: false;
+  symbol: string;
+  name?: string;
+  type?: SymbolType;
+  timeframe?: string;
+  error: string;
+}
+
+export type MarketResult = MarketAnalysis | MarketAnalysisError;
+
+export interface CatalogEntry {
+  symbol: string;
+  name: string;
+  type: SymbolType;
+}
+
+export interface MarketSettings {
+  refreshSeconds: number;
+  defaultTimeframe: string;
+  strongRatio: number;
+  twelvedataKeySet: boolean;
+}
+
+export interface MarketConfig {
+  timeframes: { id: string; label: string }[];
+  defaultTimeframe: string;
+  settings: MarketSettings;
+  catalog: CatalogEntry[];
+}

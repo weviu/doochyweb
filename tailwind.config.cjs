@@ -36,6 +36,9 @@ module.exports = {
           DEFAULT: "rgb(var(--danger) / <alpha-value>)",
           soft: "rgb(var(--danger) / 0.14)",
         },
+        // Analysis rating scale: strong_sell / sell / neutral / buy / strong_buy
+        "strong-sell": "rgb(var(--strong-sell) / <alpha-value>)",
+        "strong-buy": "rgb(var(--strong-buy) / <alpha-value>)",
       },
       fontFamily: {
         sans: ["Inter", "ui-sans-serif", "system-ui", "-apple-system", "sans-serif"],

@@ -8,6 +8,7 @@ import { userSockets } from "./ctrader/connection";
 import { discoverAccounts } from "./ctrader/auth";
 import { reconcileAccount, listAccounts } from "./ctrader/reads";
 import { amendPositionSLTP, cancelOrder, closePosition, modifyOrder, placeOrder, previewOrder, TicketInput } from "./ctrader/execute";
+import { marketRouter } from "./market/routes";
 
 const app = express();
 app.use(express.json({ limit: "100kb" }));
@@ -373,6 +374,13 @@ app.patch("/api/accounts/:ctid/positions/:positionId", authRequired, async (req:
     res.status(502).json({ error: err.message ?? "failed" });
   }
 });
+
+// -----------------------------------------------------------------------
+// Analysis (market technical analysis). Mounted under its own prefix so it
+// cannot collide with the trading API; `authRequired` is applied here because
+// the router itself is account-agnostic and shared.
+// -----------------------------------------------------------------------
+app.use("/api/market", authRequired, marketRouter);
 
 // -----------------------------------------------------------------------
 // Static serving for the React SPA (production build)

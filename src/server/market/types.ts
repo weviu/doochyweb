@@ -19,6 +19,8 @@ export type SymbolType = "forex" | "commodity" | "crypto" | "index" | "stock" | 
  *  walks providers in priority order and uses the first that returns candles. */
 export interface ProviderMap {
   binance?: string | null;
+  /** USD-M futures ticker, for metals that spot does not list. */
+  binanceFutures?: string | null;
   twelvedata?: string | null;
   yahoo?: string | null;
   stooq?: string | null;
@@ -44,6 +46,11 @@ export interface Timeframe {
   twelvedata: string | null;
   yahoo: string | null;
   yahooRange: string;
+  /**
+   * For timeframes Yahoo has no native interval for. Fetch this interval at
+   * this range and aggregate `factor` bars into one (4h = 1h x4, 3m = 1m x3).
+   */
+  yahooFallback?: { interval: string; range: string; factor: number };
   /** Maximum bars to request. Injected by the orchestrator, not by TIMEFRAMES. */
   limit?: number;
 }
@@ -128,7 +135,7 @@ export interface TimeframeRating {
   error?: string;
 }
 
-export type ProviderId = "binance" | "twelvedata" | "yahoo" | "stooq" | "simulated";
+export type ProviderId = "binance" | "binanceFutures" | "twelvedata" | "yahoo" | "stooq" | "simulated";
 
 export interface ProviderWarning {
   provider: ProviderId;
@@ -162,6 +169,8 @@ export interface AnalysisSettings {
   refreshSeconds: number;
   defaultTimeframe: string;
   strongRatio: number;
+  /** Whether markets with no working source may fall back to generated data. */
+  allowSimulated: boolean;
   /** Whether a Twelve Data key is configured on the server. */
   twelvedataKeySet: boolean;
 }

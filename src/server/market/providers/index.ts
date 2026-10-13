@@ -8,6 +8,7 @@
 
 import { getTimeframe } from "../timeframes";
 import * as breaker from "./breaker";
+import * as rateLimit from "./rateLimit";
 import type {
   AnalysisSettings,
   Candle,
@@ -19,6 +20,7 @@ import type {
   Timeframe,
 } from "../types";
 import { binance } from "./binance";
+import { binanceFutures } from "./binanceFutures";
 import { simulated } from "./simulated";
 import { stooq } from "./stooq";
 import { twelvedata } from "./twelvedata";
@@ -26,14 +28,18 @@ import { yahoo } from "./yahoo";
 
 const REGISTRY: Record<ProviderId, MarketProvider> = {
   binance,
+  binanceFutures,
   twelvedata,
   yahoo,
   stooq,
   simulated,
 };
 
-const CRYPTO_ORDER: ProviderId[] = ["binance", "twelvedata", "yahoo", "simulated"];
-const GENERAL_ORDER: ProviderId[] = ["twelvedata", "yahoo", "stooq", "binance", "simulated"];
+const CRYPTO_ORDER: ProviderId[] = ["binance", "binanceFutures", "twelvedata", "yahoo", "simulated"];
+// binanceFutures leads because it is free, unlimited and carries metals that the
+// other free sources cannot reach. Symbols without a futures mapping skip it
+// instantly via supports(), so it costs nothing for forex and equities.
+const GENERAL_ORDER: ProviderId[] = ["binanceFutures", "twelvedata", "yahoo", "stooq", "binance", "simulated"];
 
 const DEFAULT_LIMIT = 480;
 
@@ -78,8 +84,12 @@ export async function getCandles(
   const warnings: ProviderWarning[] = [];
 
   // Report a skipped provider as a warning so the UI can still explain why a
-  // symbol fell through to a lower-priority source (or the simulator).
+  // symbol fell through to a lower-priority source (or failed outright).
   for (const pid of providerOrder(meta)) {
+    if (pid === "simulated" && !settings.allowSimulated) {
+      warnings.push({ provider: pid, message: "disabled (simulated data is off)" });
+      continue;
+    }
     if (breaker.isAvailable(pid)) continue;
     warnings.push({
       provider: pid,
@@ -91,7 +101,11 @@ export async function getCandles(
 
   const order = providerOrder(meta).filter((pid) => {
     const p = REGISTRY[pid];
-    return p && p.supports(meta, settings, tf) && breaker.isAvailable(pid);
+    if (!p || !p.supports(meta, settings, tf)) return false;
+    // The simulator is opt-in. When it is off, a market with no working source
+    // fails loudly instead of rendering an invented price.
+    if (pid === "simulated" && !settings.allowSimulated) return false;
+    return breaker.isAvailable(pid);
   });
 
   for (const pid of order) {
@@ -103,6 +117,9 @@ export async function getCandles(
       return { ...hit.value, warnings, cached: true };
     }
     try {
+      // Respect the provider's quota instead of firing a burst and absorbing
+      // the resulting 429s.
+      await rateLimit.acquire(pid);
       const candles: Candle[] = await p.fetchCandles(meta, tf, { settings });
       if (!Array.isArray(candles) || candles.length < MIN_CANDLES) {
         throw new Error(`only ${candles ? candles.length : 0} candles`);
@@ -117,19 +134,32 @@ export async function getCandles(
       cache.set(key, { at: Date.now(), value });
       return { ...value, warnings, cached: false };
     } catch (err) {
-      breaker.recordFailure(pid);
-      warnings.push({ provider: pid, message: err instanceof Error ? err.message : String(err) });
+      const message = err instanceof Error ? err.message : String(err);
+      breaker.recordFailure(pid, message);
+      warnings.push({ provider: pid, message });
     }
   }
 
-  throw new Error(
-    `No data source available. ${warnings.map((w) => `${w.provider}: ${w.message}`).join("; ")}`
+  throw new Error(noSourceError(warnings));
+}
+
+/**
+ * The only diagnostic a user gets when a market cannot be priced, so it has to
+ * name each provider and why it failed, plus the way out. Exported for testing.
+ */
+export function noSourceError(warnings: ProviderWarning[]): string {
+  const detail = warnings.map((w) => `${w.provider}: ${w.message}`).join("; ");
+  return (
+    `No data source available (${detail}). ` +
+    "Set TWELVEDATA_API_KEY on the server to cover forex, metals, indices and stocks, " +
+    "or switch simulated data on in Analysis settings."
   );
 }
 
 export function clearCache(): void {
   cache.clear();
   breaker.reset();
+  rateLimit.reset();
 }
 
 export { SWEEP_CONCURRENCY };

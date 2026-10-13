@@ -88,6 +88,8 @@ export interface MarketSettings {
   refreshSeconds: number;
   defaultTimeframe: string;
   strongRatio: number;
+  /** Off by default: no invented prices. */
+  allowSimulated: boolean;
   twelvedataKeySet: boolean;
 }
 

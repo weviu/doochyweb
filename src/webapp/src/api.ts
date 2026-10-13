@@ -137,7 +137,7 @@ export interface WriteResult {
 }
 
 // ---------------------------------------------------------------------------
-// Analysis (market technical analysis) — see src/server/market
+// Analysis (market technical analysis), see src/server/market
 // ---------------------------------------------------------------------------
 
 export const marketApi = {

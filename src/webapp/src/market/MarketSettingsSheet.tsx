@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { AlertCircle, Save } from "lucide-react";
+import { AlertCircle, CheckCircle2, Save } from "lucide-react";
 
 import { AnimatedModal } from "../components/Modal";
-import { Button, Flash, inputCls } from "../components/ui";
+import { Button, Flash, Toggle, inputCls } from "../components/ui";
 import { marketApi } from "../api";
 import { timeframes } from "./timeframes";
 import type { MarketSettings } from "./types";
@@ -19,6 +19,7 @@ export function MarketSettingsSheet({
   const [refreshSeconds, setRefreshSeconds] = useState(String(settings.refreshSeconds));
   const [defaultTimeframe, setDefaultTimeframe] = useState(settings.defaultTimeframe);
   const [strongRatio, setStrongRatio] = useState(String(settings.strongRatio));
+  const [allowSimulated, setAllowSimulated] = useState(settings.allowSimulated);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
@@ -26,6 +27,7 @@ export function MarketSettingsSheet({
     setRefreshSeconds(String(settings.refreshSeconds));
     setDefaultTimeframe(settings.defaultTimeframe);
     setStrongRatio(String(settings.strongRatio));
+    setAllowSimulated(settings.allowSimulated);
   }, [settings]);
 
   async function save() {
@@ -36,6 +38,7 @@ export function MarketSettingsSheet({
         refreshSeconds: Number(refreshSeconds),
         defaultTimeframe,
         strongRatio: Number(strongRatio),
+        allowSimulated,
       });
       onSaved(next);
       setSaved(true);
@@ -50,7 +53,18 @@ export function MarketSettingsSheet({
         {error && <Flash tone="danger">{error}</Flash>}
         {saved && !error && <Flash tone="success">Settings saved</Flash>}
 
-        {!settings.twelvedataKeySet && (
+        {settings.twelvedataKeySet ? (
+          <div className="flex gap-2.5 rounded-xl border border-success/25 bg-success-soft/50 p-3 text-xs leading-relaxed text-fg-muted">
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
+            <span>
+              <strong className="text-fg">Twelve Data key detected</strong>, so forex, indices and
+              stocks are served live. Two caveats on the free plan: it allows only{" "}
+              <strong className="text-fg">8 credits per minute</strong> (a wide watchlist on a short
+              refresh will hit that ceiling), and <code className="text-fg">XAG/USD</code> silver spot
+              is a paid-tier symbol. Crypto comes from Binance either way.
+            </span>
+          </div>
+        ) : (
           <div className="flex gap-2.5 rounded-xl border border-accent/25 bg-gradient-to-r from-accent/12 to-blue-500/8 p-3 text-xs leading-relaxed text-fg-muted">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-accent" />
             <span>
@@ -96,6 +110,18 @@ export function MarketSettingsSheet({
               </option>
             ))}
           </select>
+        </div>
+
+        <div className="flex items-start justify-between gap-4 rounded-xl border border-hairline bg-soft p-3">
+          <div className="min-w-0">
+            <div className="text-xs font-medium text-fg">Simulated data</div>
+            <p className="mt-1 text-xs leading-relaxed text-fg-faint">
+              Off by default. When a market has no working data source it shows an error
+              instead of a made-up price, which is far safer than a plausible-looking fake
+              one. Turn this on only if you want every card to always render.
+            </p>
+          </div>
+          <Toggle label="" ariaLabel="Allow simulated data" checked={allowSimulated} onToggle={setAllowSimulated} />
         </div>
 
         <div className="space-y-1.5">

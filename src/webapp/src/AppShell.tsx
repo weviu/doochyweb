@@ -1,5 +1,5 @@
 import { type ReactNode } from "react";
-import { LogOut, RefreshCw, Settings } from "lucide-react";
+import { LogIn, LogOut, RefreshCw, Settings } from "lucide-react";
 
 import { Button } from "./components/ui";
 
@@ -23,7 +23,9 @@ export function AppShell({
   view,
   onViewChange,
   onRefresh,
+  signedIn,
   onOpenSettings,
+  onSignIn,
   onLogout,
   children,
 }: {
@@ -32,7 +34,11 @@ export function AppShell({
   // Optional view-level refresh. Omitted for views that own their own refresh
   // control (the Analysis page has one in its toolbar).
   onRefresh?: () => Promise<void> | void;
+  // The Analysis page is public; the account-level actions only appear once
+  // there is a session.
+  signedIn: boolean;
   onOpenSettings: () => void;
+  onSignIn: () => void;
   onLogout: () => void;
   children: ReactNode;
 }) {
@@ -76,34 +82,49 @@ export function AppShell({
           </nav>
 
           <div className="flex shrink-0 items-center gap-1">
-            {onRefresh && (
+            {signedIn ? (
+              <>
+                {onRefresh && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    icon={<RefreshCw className="h-4 w-4" />}
+                    onClickAsync={async () => {
+                      await onRefresh();
+                    }}
+                    aria-label="Refresh balances"
+                    title="Refresh balances"
+                  />
+                )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon={<Settings className="h-4 w-4" />}
+                  onClick={onOpenSettings}
+                  aria-label="Settings"
+                  title="Settings"
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon={<LogOut className="h-4 w-4" />}
+                  onClick={onLogout}
+                  aria-label="Sign out"
+                  title="Sign out"
+                />
+              </>
+            ) : (
               <Button
                 size="sm"
-                variant="ghost"
-                icon={<RefreshCw className="h-4 w-4" />}
-                onClickAsync={async () => {
-                  await onRefresh();
-                }}
-                aria-label="Refresh balances"
-                title="Refresh balances"
-              />
+                variant="primary"
+                icon={<LogIn className="h-4 w-4" />}
+                onClick={onSignIn}
+                aria-label="Sign in"
+                title="Sign in to manage trading accounts"
+              >
+                Sign in
+              </Button>
             )}
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={<Settings className="h-4 w-4" />}
-              onClick={onOpenSettings}
-              aria-label="Settings"
-              title="Settings"
-            />
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={<LogOut className="h-4 w-4" />}
-              onClick={onLogout}
-              aria-label="Sign out"
-              title="Sign out"
-            />
           </div>
         </div>
       </header>

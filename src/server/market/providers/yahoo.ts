@@ -27,14 +27,16 @@ interface YahooResponse {
 export async function fetchCandles(meta: SymbolMeta, tf: Timeframe): Promise<Candle[]> {
   const symbol = meta.providers.yahoo!;
   let interval = tf.yahoo;
-  const range = tf.yahooRange;
+  let range = tf.yahooRange;
   let factor = 1;
 
-  // Yahoo has no native 4h interval: pull 1h and aggregate 4:1. The 4h entry
-  // already carries yahooRange "1y", which is the range Yahoo allows for 60m.
-  if (!interval && tf.id === "4h") {
-    interval = "60m";
-    factor = 4;
+  // No native Yahoo interval for this timeframe (4h, 3m): fetch the closest one
+  // Yahoo does have and aggregate. The timeframe declares this explicitly so
+  // adding an interval is a data change, not a code change here.
+  if (!interval && tf.yahooFallback) {
+    interval = tf.yahooFallback.interval;
+    range = tf.yahooFallback.range;
+    factor = tf.yahooFallback.factor;
   }
   if (!interval) throw new Error(`Yahoo does not support ${tf.id}`);
 

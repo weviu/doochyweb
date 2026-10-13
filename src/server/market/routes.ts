@@ -2,12 +2,17 @@
 // analysis. Ported from the standalone `gauge` project's `server.js`, which
 // hand-rolled the same routes over `node:http`.
 //
-// Mounted at /api/market by index.ts and guarded by the shared auth middleware
-// there, so every handler here can assume `req.userId` is present.
+// Mounted at /api/market by index.ts. The Analysis page is public, so the read
+// routes (config, catalog, search, watchlist, analysis) are deliberately open.
+// Anything that mutates shared state, or forces an upstream fetch, sits behind
+// authRequired: the watchlist and settings are ONE global document, so leaving
+// writes open would let any visitor rewrite them, and the per-symbol refresh
+// bypasses the cache and therefore spends provider quota.
 
 import { Router } from "express";
 
 import { analyze, setStrongRatio } from "./analysis";
+import { authRequired } from "../auth";
 import { clearCache, getCandles, mapPool, MAX_SWEEP, SWEEP_CONCURRENCY } from "./providers/index";
 import { catalogList, resolveSymbol, searchCatalog } from "./symbols";
 import {
@@ -50,7 +55,7 @@ marketRouter.get("/watchlist", async (_req, res) => {
   res.json({ symbols: await getWatchlist() });
 });
 
-marketRouter.post("/watchlist", async (req, res) => {
+marketRouter.post("/watchlist", authRequired, async (req, res) => {
   const symbol = req.body?.symbol;
   if (!symbol) {
     res.status(400).json({ error: "symbol is required" });
@@ -66,7 +71,7 @@ marketRouter.post("/watchlist", async (req, res) => {
   res.json({ symbols: await addToWatchlist(meta.symbol) });
 });
 
-marketRouter.delete("/watchlist", async (req, res) => {
+marketRouter.delete("/watchlist", authRequired, async (req, res) => {
   const symbol = req.query.symbol;
   if (!symbol) {
     res.status(400).json({ error: "symbol is required" });
@@ -79,12 +84,13 @@ marketRouter.get("/settings", async (_req, res) => {
   res.json(await publicSettings());
 });
 
-marketRouter.post("/settings", async (req, res) => {
+marketRouter.post("/settings", authRequired, async (req, res) => {
   const body = req.body ?? {};
   const patch: Record<string, unknown> = {};
   if (body.refreshSeconds !== undefined) patch.refreshSeconds = Number(body.refreshSeconds);
   if (body.defaultTimeframe !== undefined) patch.defaultTimeframe = String(body.defaultTimeframe);
   if (body.strongRatio !== undefined) patch.strongRatio = Number(body.strongRatio);
+  if (body.allowSimulated !== undefined) patch.allowSimulated = Boolean(body.allowSimulated);
   await updateSettings(patch);
   // A settings change can invalidate every cached series (new source, new
   // sensitivity), so drop them the way the standalone server did.
@@ -110,7 +116,7 @@ marketRouter.get("/analysis", async (req, res) => {
 // Force-refresh a single symbol, bypassing the per-timeframe candle cache. Used
 // by the per-card refresh control, so one market can be re-pulled without
 // waiting out the TTL or re-fetching the whole watchlist.
-marketRouter.post("/analysis/:symbol/refresh", async (req, res) => {
+marketRouter.post("/analysis/:symbol/refresh", authRequired, async (req, res) => {
   const symbol = req.params.symbol;
   const timeframe = req.query.timeframe ? String(req.query.timeframe) : DEFAULT_TIMEFRAME;
   const { strongRatio } = await getSettings();

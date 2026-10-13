@@ -11,7 +11,7 @@ import { SymbolSearch } from "./SymbolSearch";
 import { DEFAULT_TIMEFRAME, timeframes as staticTimeframes } from "./timeframes";
 import type { CatalogEntry, MarketResult, MarketSettings } from "./types";
 
-export default function AnalysisPage() {
+export default function AnalysisPage({ canWrite }: { canWrite: boolean }) {
   const [config, setConfig] = useState<{
     timeframes: { id: string; label: string }[];
     settings: MarketSettings;
@@ -89,7 +89,7 @@ export default function AnalysisPage() {
   const addSymbol = useCallback(
     async (raw: string) => {
       const symbol = raw.trim();
-      if (!symbol) return;
+      if (!symbol || !canWrite) return;
       try {
         await marketApi.addSymbol(symbol);
         await load();
@@ -97,11 +97,12 @@ export default function AnalysisPage() {
         setError(err instanceof Error ? err.message : "Failed to add market");
       }
     },
-    [load]
+    [load, canWrite]
   );
 
   const removeSymbol = useCallback(
     async (symbol: string) => {
+      if (!canWrite) return;
       setResults((prev) => prev.filter((r) => r.symbol !== symbol));
       try {
         await marketApi.removeSymbol(symbol);
@@ -110,7 +111,7 @@ export default function AnalysisPage() {
         setError(err instanceof Error ? err.message : "Failed to remove market");
       }
     },
-    [load]
+    [load, canWrite]
   );
 
   // Stable per-card handlers: the cards are memoised, so handing them a fresh
@@ -122,6 +123,7 @@ export default function AnalysisPage() {
 
   const refreshOne = useCallback(
     async (symbol: string) => {
+      if (!canWrite) return;
       setRefreshing((prev) => new Set(prev).add(symbol));
       try {
         const result = await marketApi.refreshSymbol(symbol, timeframe);
@@ -138,7 +140,7 @@ export default function AnalysisPage() {
         });
       }
     },
-    [timeframe]
+    [timeframe, canWrite]
   );
 
   const okCount = results.filter((r) => r.ok).length;
@@ -172,7 +174,13 @@ export default function AnalysisPage() {
             ))}
           </div>
 
-          <SymbolSearch catalog={config?.catalog ?? []} onAdd={(s) => void addSymbol(s)} />
+          {canWrite ? (
+            <SymbolSearch catalog={config?.catalog ?? []} onAdd={(s) => void addSymbol(s)} />
+          ) : (
+            <p className="flex-1 self-center px-1 text-sm text-fg-faint">
+              Viewing a shared watchlist. Sign in to add markets.
+            </p>
+          )}
         </Card>
 
         <StatusLine
@@ -224,6 +232,7 @@ export default function AnalysisPage() {
                   analysis={r}
                   strongRatio={strongRatio}
                   refreshing={refreshing.has(r.symbol)}
+                  canWrite={canWrite}
                   onOpen={openDetail}
                   onRefresh={refreshOne}
                   onRemove={removeSymbol}
@@ -234,6 +243,7 @@ export default function AnalysisPage() {
                   symbol={r.symbol}
                   error={r.error}
                   refreshing={refreshing.has(r.symbol)}
+                  canWrite={canWrite}
                   onRefresh={refreshOne}
                   onRemove={removeSymbol}
                 />
@@ -244,7 +254,7 @@ export default function AnalysisPage() {
 
         <p className="pb-2 text-center text-[11px] leading-relaxed text-fg-faint">
           Indicators computed server-side (RSI, STOCH, MACD, ADX, CCI, Williams %R, ATR, Ultimate
-          Oscillator, ROC, Bull/Bear Power, SMA/EMA 5–200). Not financial advice.
+          Oscillator, ROC, Bull/Bear Power, SMA/EMA 5-200). Not financial advice.
         </p>
       </div>
 
@@ -254,6 +264,7 @@ export default function AnalysisPage() {
           timeframe={detail.timeframe}
           strongRatio={strongRatio}
           timeframes={timeframes}
+          canWrite={canWrite}
           onClose={() => setDetail(null)}
           onRemove={(s) => void removeSymbol(s)}
           onTimeframeChange={(tf) => setDetail((d) => (d ? { ...d, timeframe: tf } : d))}

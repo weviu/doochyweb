@@ -33,6 +33,10 @@ const DEFAULT_SETTINGS = {
   refreshSeconds: 60,
   defaultTimeframe: DEFAULT_TIMEFRAME,
   strongRatio: 0.25,
+  // Off by default. A market with no working data source shows an explicit
+  // error rather than an invented price, because a plausible-looking fake
+  // price is far worse than a visible gap.
+  allowSimulated: false,
 };
 
 const marketSettingsSchema = new mongoose.Schema({
@@ -41,6 +45,7 @@ const marketSettingsSchema = new mongoose.Schema({
   refreshSeconds: { type: Number, default: DEFAULT_SETTINGS.refreshSeconds },
   defaultTimeframe: { type: String, default: DEFAULT_SETTINGS.defaultTimeframe },
   strongRatio: { type: Number, default: DEFAULT_SETTINGS.strongRatio },
+  allowSimulated: { type: Boolean, default: DEFAULT_SETTINGS.allowSimulated },
   updatedAt: { type: Date, default: Date.now },
 });
 
@@ -51,6 +56,7 @@ export interface StoredMarketSettings {
   refreshSeconds: number;
   defaultTimeframe: string;
   strongRatio: number;
+  allowSimulated: boolean;
 }
 
 // Environment overrides win over the stored values so the app can be configured
@@ -80,6 +86,7 @@ export async function getSettings(): Promise<StoredMarketSettings> {
     refreshSeconds: doc?.refreshSeconds ?? DEFAULT_SETTINGS.refreshSeconds,
     defaultTimeframe: doc?.defaultTimeframe ?? DEFAULT_SETTINGS.defaultTimeframe,
     strongRatio: doc?.strongRatio ?? DEFAULT_SETTINGS.strongRatio,
+    allowSimulated: doc?.allowSimulated ?? DEFAULT_SETTINGS.allowSimulated,
   });
 }
 
@@ -94,6 +101,7 @@ export async function updateSettings(patch: Partial<StoredMarketSettings>): Prom
     const n = Number(patch.strongRatio);
     if (Number.isFinite(n) && n > 0 && n <= 1) $set.strongRatio = n;
   }
+  if (patch.allowSimulated != null) $set.allowSimulated = Boolean(patch.allowSimulated);
   await MarketSettings.updateOne({ _id: GLOBAL_ID }, { $set }, { upsert: true }).exec();
   return getSettings();
 }
@@ -136,6 +144,7 @@ export async function publicSettings(): Promise<AnalysisSettings> {
     refreshSeconds: s.refreshSeconds,
     defaultTimeframe: s.defaultTimeframe,
     strongRatio: s.strongRatio,
+    allowSimulated: s.allowSimulated,
     twelvedataKeySet: Boolean(process.env.TWELVEDATA_API_KEY),
   };
 }

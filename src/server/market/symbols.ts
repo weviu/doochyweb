@@ -26,6 +26,18 @@ const YAHOO_METAL: Record<string, string | null> = {
   XPD: "PA=F",
 };
 
+// Metals on Binance USD-M futures. Spot has gold only, but fapi also lists
+// silver, platinum and palladium, and every free alternative is either
+// rate-limited (Yahoo from this host) or a paid data plan (Twelve Data's
+// XAG/USD is Grow/Venture tier). So the futures perimeter is the one source
+// that prices these without a key.
+const BINANCE_FUTURES: Record<string, string> = {
+  XAU: "XAUUSDT",
+  XAG: "XAGUSDT",
+  XPT: "XPTUSDT",
+  XPD: "XPDUSDT",
+};
+
 // Base asset -> Binance spot symbol. Only real, liquid pairs.
 const BINANCE: Record<string, string> = {
   BTC: "BTCUSDT", ETH: "ETHUSDT", BNB: "BNBUSDT", SOL: "SOLUSDT",
@@ -136,10 +148,16 @@ function metalMeta(symbol: string): SymbolMeta {
     meta.providers.twelvedata = `${base}/${quote}`;
     meta.providers.yahoo = YAHOO_METAL[base] ?? null;
     meta.providers.stooq = symbol.toLowerCase();
+    const futures = BINANCE_FUTURES[base];
+    if (futures) {
+      meta.providers.binanceFutures = futures;
+      if (base !== "XAU") {
+        meta.note = `${base} via the Binance ${futures} perpetual when no spot feed is available.`;
+      }
+    }
     if (base === "XAU") {
       meta.providers.binance = "PAXGUSDT";
       meta.proxy = "PAXG (gold-backed token)";
-      meta.note = "Gold via Binance PAXGUSDT proxy when no spot feed is configured.";
     }
   } else {
     meta.providers.twelvedata = `${base}/${quote}`;

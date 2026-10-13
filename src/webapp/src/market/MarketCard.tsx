@@ -24,6 +24,8 @@ interface CardProps {
   analysis: MarketAnalysis;
   strongRatio: number;
   refreshing: boolean;
+  /** False for anonymous visitors: the write endpoints require auth. */
+  canWrite: boolean;
   onOpen: (symbol: string) => void;
   onRefresh: (symbol: string) => void;
   onRemove: (symbol: string) => void;
@@ -64,7 +66,7 @@ function SubSummary({ title, section }: { title: string; section: Section }) {
   );
 }
 
-function MarketCardInner({ analysis, strongRatio, refreshing, onOpen, onRefresh, onRemove }: CardProps) {
+function MarketCardInner({ analysis, strongRatio, refreshing, canWrite, onOpen, onRefresh, onRemove }: CardProps) {
   const a = analysis;
   const color = ratingColor(a.summary.rating);
   const warningTitle = a.warnings?.length
@@ -101,6 +103,7 @@ function MarketCardInner({ analysis, strongRatio, refreshing, onOpen, onRefresh,
         </div>
 
         <div className="pointer-events-auto flex shrink-0 items-center">
+          {canWrite && (
           <button
             type="button"
             onClick={(e) => {
@@ -109,11 +112,13 @@ function MarketCardInner({ analysis, strongRatio, refreshing, onOpen, onRefresh,
             }}
             disabled={refreshing}
             aria-label={`Refresh ${a.symbol}`}
-            title={warningTitle ? `Refresh ${a.symbol} — ${warningTitle}` : `Refresh ${a.symbol}`}
+            title={warningTitle ? `Refresh ${a.symbol}: ${warningTitle}` : `Refresh ${a.symbol}`}
             className="rounded-md p-1.5 text-fg-faint transition duration-150 hover:bg-surface-hover hover:text-fg disabled:opacity-50"
           >
             <RefreshCw className={"h-3.5 w-3.5 " + (refreshing ? "animate-spin" : "")} />
           </button>
+          )}
+          {canWrite && (
           <button
             type="button"
             onClick={(e) => {
@@ -126,6 +131,7 @@ function MarketCardInner({ analysis, strongRatio, refreshing, onOpen, onRefresh,
           >
             <X className="h-3.5 w-3.5" />
           </button>
+          )}
         </div>
       </div>
 
@@ -188,16 +194,18 @@ interface ErrorProps {
   symbol: string;
   error: string;
   refreshing: boolean;
+  canWrite: boolean;
   onRefresh: (symbol: string) => void;
   onRemove: (symbol: string) => void;
 }
 
-function MarketCardErrorInner({ symbol, error, refreshing, onRefresh, onRemove }: ErrorProps) {
+function MarketCardErrorInner({ symbol, error, refreshing, canWrite, onRefresh, onRemove }: ErrorProps) {
   return (
     <Card className="flex min-h-[200px] flex-col items-center justify-center gap-2 border-danger/30 p-4 text-center">
       <div className="text-base font-bold text-fg">{symbol}</div>
       <p className="line-clamp-3 text-[11.5px] leading-relaxed text-fg-muted">{error}</p>
       <div className="mt-1 flex items-center gap-1">
+        {canWrite && (
         <button
           type="button"
           onClick={() => onRefresh(symbol)}
@@ -207,6 +215,8 @@ function MarketCardErrorInner({ symbol, error, refreshing, onRefresh, onRemove }
         >
           <RefreshCw className={"h-3.5 w-3.5 " + (refreshing ? "animate-spin" : "")} />
         </button>
+        )}
+        {canWrite && (
         <button
           type="button"
           onClick={() => onRemove(symbol)}
@@ -215,6 +225,7 @@ function MarketCardErrorInner({ symbol, error, refreshing, onRefresh, onRemove }
         >
           <X className="h-3.5 w-3.5" />
         </button>
+        )}
       </div>
     </Card>
   );

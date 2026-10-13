@@ -38,7 +38,7 @@ export function ratingColor(rating: string | undefined): string {
 }
 
 export function ratingLabel(rating: string | undefined): string {
-  return RATINGS[rating as Rating]?.label ?? "—";
+  return RATINGS[rating as Rating]?.label ?? "-";
 }
 
 export function signalColor(signal: Signal | undefined): string {
@@ -48,7 +48,7 @@ export function signalColor(signal: Signal | undefined): string {
 }
 
 export function providerName(id: string | undefined): string {
-  return PROVIDERS[id ?? ""] ?? id ?? "—";
+  return PROVIDERS[id ?? ""] ?? id ?? "-";
 }
 
 // ---------------------------------------------------------------------------
@@ -57,14 +57,14 @@ export function providerName(id: string | undefined): string {
 
 /** Price decimals scale with magnitude so big values don't trail zeros. */
 export function fmtPrice(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
+  if (v == null || !Number.isFinite(v)) return "-";
   const abs = Math.abs(v);
   const d = abs >= 1000 ? 2 : abs >= 10 ? 3 : abs >= 1 ? 4 : 6;
   return v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
 }
 
 export function fmtChangePct(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return "—";
+  if (v == null || !Number.isFinite(v)) return "-";
   return `${v >= 0 ? "+" : ""}${v.toFixed(2)}%`;
 }
 
@@ -87,7 +87,7 @@ export function timeAgo(ts: number | null | undefined): string {
 export const PRICE_STYLE_INDICATORS = ["ATR(14)", "Highs/Lows(14)", "Bull/Bear Power(13)"];
 
 export function indicatorValue(name: string, value: number | null): string {
-  if (value == null || !Number.isFinite(value)) return "—";
+  if (value == null || !Number.isFinite(value)) return "-";
   if (PRICE_STYLE_INDICATORS.includes(name)) return fmtPrice(value);
   return value.toFixed(2);
 }

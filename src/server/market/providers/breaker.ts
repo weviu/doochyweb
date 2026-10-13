@@ -31,6 +31,16 @@ const FAILURE_THRESHOLD = 2;
 const BASE_COOLDOWN_MS = 5 * 60 * 1000;
 const MAX_COOLDOWN_MS = 30 * 60 * 1000;
 
+/**
+ * A rate limit is not a dead provider. Twelve Data hands back 429 "you have run
+ * out of API credits for the current minute" and its quota refills every 60
+ * seconds, so parking it for 5+ minutes threw away most of its availability.
+ * Rate-limited providers get a short cooldown that simply matches the refill
+ * window instead.
+ */
+const RATE_LIMIT_COOLDOWN_MS = 65 * 1000;
+const RATE_LIMIT_PATTERN = /\b(429|too many requests|rate limit|out of API credits|quota)\b/i;
+
 function entry(provider: ProviderId): BreakerState {
   let s = state.get(provider);
   if (!s) {
@@ -54,12 +64,20 @@ export function recordSuccess(provider: ProviderId): void {
   state.set(provider, { failures: 0, openUntil: 0, trips: 0 });
 }
 
-export function recordFailure(provider: ProviderId, now = Date.now()): void {
+export function recordFailure(provider: ProviderId, message = "", now = Date.now()): void {
   const s = entry(provider);
   // Already out of rotation: this failure is part of the same outage, so leave
   // the cooldown where it is rather than escalating on every symbol.
   if (s.openUntil > now) return;
   s.failures++;
+
+  // Rate limited: one short cooldown, then straight back in. No escalation,
+  // because the quota window resets regardless of how many symbols hit it.
+  if (RATE_LIMIT_PATTERN.test(message)) {
+    s.openUntil = now + RATE_LIMIT_COOLDOWN_MS;
+    return;
+  }
+
   if (s.failures < FAILURE_THRESHOLD) return;
   s.trips++;
   s.openUntil = now + Math.min(BASE_COOLDOWN_MS * 2 ** (s.trips - 1), MAX_COOLDOWN_MS);

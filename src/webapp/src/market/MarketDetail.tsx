@@ -22,6 +22,7 @@ export function MarketDetail({
   timeframe,
   strongRatio,
   timeframes,
+  canWrite,
   onClose,
   onRemove,
   onTimeframeChange,
@@ -30,6 +31,7 @@ export function MarketDetail({
   timeframe: string;
   strongRatio: number;
   timeframes: { id: string; label: string }[];
+  canWrite: boolean;
   onClose: () => void;
   onRemove: (symbol: string) => void;
   onTimeframeChange: (tf: string) => void;
@@ -69,7 +71,8 @@ export function MarketDetail({
       size="lg"
       title={symbol}
       actions={
-        <>
+        canWrite ? (
+          <>
           <button
             type="button"
             onClick={() => setSeq((n) => n + 1)}
@@ -92,7 +95,8 @@ export function MarketDetail({
           >
             <Trash2 className="h-4 w-4" />
           </button>
-        </>
+          </>
+        ) : null
       }
       subtitle={
         a ? (
@@ -148,7 +152,7 @@ export function MarketDetail({
                     className="text-xs font-semibold"
                     style={{ color: r?.rating ? ratingColor(r.rating) : undefined }}
                   >
-                    {r?.rating ? ratingLabel(r.rating) : "—"}
+                    {r?.rating ? ratingLabel(r.rating) : "-"}
                   </span>
                 </button>
               );

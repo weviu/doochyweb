@@ -11,6 +11,7 @@ import { analyze, RATINGS } from "../src/server/market/analysis";
 import * as ti from "../src/server/market/indicators";
 import { resolveSymbol } from "../src/server/market/symbols";
 import { fetchCandles as simulatedCandles } from "../src/server/market/providers/simulated";
+import { noSourceError } from "../src/server/market/providers/index";
 import * as breaker from "../src/server/market/providers/breaker";
 import type { Candle, Timeframe } from "../src/server/market/types";
 
@@ -123,6 +124,46 @@ describe("symbols", () => {
   });
 });
 
+describe("data source failure reporting", () => {
+  // The "no data source" message is the only diagnostic a user gets when a
+  // market cannot be priced, so it must name the providers and why each failed.
+  // An earlier edit dropped the interpolation and shipped a bare sentence.
+  test("names every provider and its reason, plus the way out", () => {
+    const msg = noSourceError([
+      { provider: "twelvedata", message: "HTTP 404: available starting with the Grow plan" },
+      { provider: "yahoo", message: "HTTP 429" },
+      { provider: "stooq", message: "This operation was aborted" },
+    ]);
+    assert.match(msg, /No data source available/);
+    assert.match(msg, /twelvedata: HTTP 404: available starting with the Grow plan/);
+    assert.match(msg, /yahoo: HTTP 429/);
+    assert.match(msg, /stooq: This operation was aborted/);
+    assert.match(msg, /TWELVEDATA_API_KEY/, "should say how to fix it");
+  });
+
+  test("is specific rather than a bare sentence", () => {
+    const msg = noSourceError([{ provider: "yahoo", message: "HTTP 429" }]);
+    assert.ok(msg.length > 60, `message too short to diagnose: ${msg}`);
+  });
+});
+
+describe("metals coverage", () => {
+  // Spot has gold only (PAXG/XAUT); silver, platinum and palladium live on
+  // Binance USD-M futures. Without that mapping the only free alternative for
+  // XAGUSD was Twelve Data, which gates it behind a paid plan.
+  test("maps metals to Binance USD-M futures", () => {
+    assert.equal(resolveSymbol("XAGUSD").providers.binanceFutures, "XAGUSDT");
+    assert.equal(resolveSymbol("XPTUSD").providers.binanceFutures, "XPTUSDT");
+    assert.equal(resolveSymbol("XPDUSD").providers.binanceFutures, "XPDUSDT");
+    assert.equal(resolveSymbol("XAUUSD").providers.binanceFutures, "XAUUSDT");
+  });
+
+  test("does not claim futures for symbols that have no contract", () => {
+    assert.equal(resolveSymbol("EURUSD").providers.binanceFutures, undefined);
+    assert.equal(resolveSymbol("BTCUSD").providers.binance, "BTCUSDT");
+  });
+});
+
 describe("provider circuit breaker", () => {
   // The breaker is what keeps a dead provider from billing its timeout to every
   // symbol on every sweep, so its trip/cooldown arithmetic is worth pinning.
@@ -131,7 +172,7 @@ describe("provider circuit breaker", () => {
   test("stays closed until the failure threshold is reached", () => {
     breaker.reset();
     const now = 1_000_000;
-    breaker.recordFailure("stooq", now);
+    breaker.recordFailure("stooq", "", now);
     assert.equal(breaker.isAvailable("stooq", now), true);
     assert.equal(breaker.cooldownRemaining("stooq", now), 0);
   });
@@ -139,8 +180,8 @@ describe("provider circuit breaker", () => {
   test("opens after the threshold and blocks calls", () => {
     breaker.reset();
     const now = 1_000_000;
-    breaker.recordFailure("stooq", now);
-    breaker.recordFailure("stooq", now);
+    breaker.recordFailure("stooq", "", now);
+    breaker.recordFailure("stooq", "", now);
     assert.equal(breaker.isAvailable("stooq", now), false);
     assert.equal(breaker.cooldownRemaining("stooq", now), FIVE_MIN);
   });
@@ -148,7 +189,7 @@ describe("provider circuit breaker", () => {
   test("more failures in the same outage do not lengthen the cooldown", () => {
     breaker.reset();
     const now = 1_000_000;
-    for (let i = 0; i < 20; i++) breaker.recordFailure("yahoo", now);
+    for (let i = 0; i < 20; i++) breaker.recordFailure("yahoo", "", now);
     // One sweep analyses many symbols; all those failures are one incident.
     assert.equal(breaker.cooldownRemaining("yahoo", now), FIVE_MIN);
   });
@@ -157,8 +198,8 @@ describe("provider circuit breaker", () => {
     breaker.reset();
     let now = 1_000_000;
     const trip = (at: number) => {
-      breaker.recordFailure("stooq", at);
-      breaker.recordFailure("stooq", at);
+      breaker.recordFailure("stooq", "", at);
+      breaker.recordFailure("stooq", "", at);
     };
     trip(now);
     assert.equal(breaker.cooldownRemaining("stooq", now), FIVE_MIN);
@@ -171,11 +212,24 @@ describe("provider circuit breaker", () => {
     assert.equal(breaker.cooldownRemaining("stooq", now), FIVE_MIN * 4);
   });
 
+  test("a rate limit gets a short cooldown, not the long dead-provider one", () => {
+    breaker.reset();
+    const now = 1_000_000;
+    // Twelve Data answers 429 "out of API credits for the current minute"; its
+    // quota refills every 60s, so parking it for 5+ minutes wastes availability.
+    breaker.recordFailure("twelvedata", "HTTP 429: You have run out of API credits for the current minute.", now);
+    const cooling = breaker.cooldownRemaining("twelvedata", now);
+    assert.ok(cooling > 0 && cooling < FIVE_MIN, `expected a short cooldown, got ${cooling}`);
+    assert.equal(breaker.snapshot().twelvedata.trips, 0, "rate limits must not escalate");
+    // And it comes straight back once the quota window rolls over.
+    assert.equal(breaker.isAvailable("twelvedata", now + cooling), true);
+  });
+
   test("a success closes it and resets the escalation", () => {
     breaker.reset();
     const now = 1_000_000;
-    breaker.recordFailure("yahoo", now);
-    breaker.recordFailure("yahoo", now);
+    breaker.recordFailure("yahoo", "", now);
+    breaker.recordFailure("yahoo", "", now);
     assert.equal(breaker.isAvailable("yahoo", now), false);
     breaker.recordSuccess("yahoo");
     assert.equal(breaker.isAvailable("yahoo", now), true);

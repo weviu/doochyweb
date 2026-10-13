@@ -4,7 +4,18 @@ import { api, ApiError } from "./api";
 import { Button, Card, Flash, inputCls } from "./components/ui";
 import { FadeRise } from "./components/motion";
 
-export default function Login({ onAuthed }: { onAuthed: (token: string) => void }) {
+export default function Login({
+  onAuthed,
+  variant = "fullscreen",
+  hint,
+}: {
+  onAuthed: (token: string) => void;
+  // "fullscreen" takes over the viewport (used when nothing is signed in and
+  // no shell is rendered); "inline" sits inside the app shell, for the Trading
+  // tab when the visitor has no account.
+  variant?: "fullscreen" | "inline";
+  hint?: string;
+}) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -23,7 +34,7 @@ export default function Login({ onAuthed }: { onAuthed: (token: string) => void 
   const ready = username.trim() !== "" && password !== "";
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-6">
+    <div className={variant === "fullscreen" ? "flex min-h-screen items-center justify-center p-6" : ""}>
       <FadeRise className="w-full max-w-sm">
         <Card className="p-8 shadow-overlay">
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent-soft text-accent">
@@ -31,7 +42,10 @@ export default function Login({ onAuthed }: { onAuthed: (token: string) => void 
           </div>
           <h1 className="mt-4 text-2xl font-semibold tracking-tight">Sign In</h1>
           <p className="mt-1 text-sm text-fg-muted">
-            {mode === "login" ? "Sign in to manage your cTrader accounts" : "Create an account to get started"}
+            {hint ??
+              (mode === "login"
+                ? "Sign in to manage your cTrader accounts"
+                : "Create an account to get started")}
           </p>
 
           <form

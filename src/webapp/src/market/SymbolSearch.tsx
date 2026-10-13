@@ -153,7 +153,7 @@ export function SymbolSearch({
           }}
           onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
-          placeholder="Add market — XAUUSD, BTC, NAS100, AAPL…"
+          placeholder="Add market: XAUUSD, BTC, NAS100, AAPL…"
           aria-label="Add market"
           className={
             "w-full rounded-lg border border-hairline-strong bg-soft py-1.5 pl-9 pr-9 text-sm text-fg " +

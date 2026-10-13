@@ -376,11 +376,12 @@ app.patch("/api/accounts/:ctid/positions/:positionId", authRequired, async (req:
 });
 
 // -----------------------------------------------------------------------
-// Analysis (market technical analysis). Mounted under its own prefix so it
-// cannot collide with the trading API; `authRequired` is applied here because
-// the router itself is account-agnostic and shared.
+// Analysis (market technical analysis). Deliberately PUBLIC - no authRequired.
+// The watchlist and settings are a single shared document and the data is
+// public market quotes, so the Analysis page is usable without an account.
+// Everything under /api/accounts and /api/credentials stays behind auth.
 // -----------------------------------------------------------------------
-app.use("/api/market", authRequired, marketRouter);
+app.use("/api/market", marketRouter);
 
 // -----------------------------------------------------------------------
 // Static serving for the React SPA (production build)

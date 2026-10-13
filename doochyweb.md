@@ -1,10 +1,10 @@
-# DoochyWeb — Phase 1 project plan & build brief
+# DoochyWeb: Phase 1 project plan & build brief
 
 Status: plan approved, awaiting build. Reference implementation for all cTrader
 Open API protocol details: the `doochy` repository on this machine
 (`/home/san/doochy`). Build the new app as a **separate sibling project** at
 `/home/san/doochyweb` (own package, own git repo). It shares protocol knowledge
-with `doochy`, but is **not wired into doochybot** — DoochyWeb is a manual
+with `doochy`, but is **not wired into doochybot**; DoochyWeb is a manual
 management view, DoochyBot stays fully automated.
 
 ## 1. Purpose
@@ -36,7 +36,7 @@ Open API app credentials once; the app discovers every account under that grant
   cleanup; the app just connects.
 - **User management:** open self-registration (username + password, bcrypt,
   JWT). Temporary, minimal hardening. Do **not** log secrets/tokens anywhere.
-- **Domain:** `doochy.net` (not yet owned — being purchased). Deploy/nginx step
+- **Domain:** `doochy.net` (not yet owned, being purchased). Deploy/nginx step
   treats it as the eventual hostname; development happens on
   `http://127.0.0.1:9111` until the domain is live.
 
@@ -67,18 +67,18 @@ Open API app credentials once; the app discovers every account under that grant
 
 - **Backend:** Node + TypeScript + Express on `127.0.0.1:9111` (port confirmed
   free). `dotenv`, `mongoose`, `bcrypt`, `jsonwebtoken`.
-- **cTrader protocol:** reuse npm package **`@reiryoku/ctrader-layer`** — the
+- **cTrader protocol:** reuse npm package **`@reiryoku/ctrader-layer`**, the
   exact package doochy depends on. It does protobuf serialization + WebSocket;
   `new CTraderConnection({ host, port })`, `await connection.open()`,
   `connection.sendCommand("ProtoXxxReq", {...})`, `connection.sendHeartbeat()`,
   `connection.on("ProtoOAExecutionEvent", ...)`. Installing this is most of the
-  hard protocol work done — do not write raw protobuf/WebSocket handling.
+  hard protocol work done; do not write raw protobuf/WebSocket handling.
 - **Frontend:** React + Vite + TS, dark theme, single page, two tabs + a global
   account switcher. Same Express process serves the built SPA.
 - **Process:** pm2 app `doochyweb`; nginx reverse-proxy block to `:9111`
   (added when the domain is owned).
 
-## 4. cTrader Open API — endpoints & message spec
+## 4. cTrader Open API: endpoints & message spec
 
 > All fields the builder needs are lifted from doochy's working code; reference
 > those files rather than re-researching the Open API docs.
@@ -90,7 +90,7 @@ Open API app credentials once; the app discovers every account under that grant
 | Demo | `demo.ctraderapi.com:5035` |
 | Live | `live.ctraderapi.com:5035` |
 
-- Port **5035 for both** (5036 is the JSON variant — irrelevant here).
+- Port **5035 for both** (5036 is the JSON variant, irrelevant here).
 - Demo and live are **fully separated**: operations on one environment cannot
   go over the other's connection. At most **two** connections are ever needed
   (one demo, one live); each supports any number of accounts of its type.
@@ -102,7 +102,7 @@ Open API app credentials once; the app discovers every account under that grant
 
 1. **User-entered credentials** (dashboard form):
    `CLIENT_ID`, `CLIENT_SECRET`, `ACCESS_TOKEN`, `REFRESH_TOKEN`
-   (from the Open API app portal, `openapi.ctrader.com/apps` —
+   (from the Open API app portal, `openapi.ctrader.com/apps`:
    see the exact instructions text in `scripts/setup.ts:112-120`).
 2. Connect: `new CTraderConnection({ host: "demo.ctraderapi.com", port: 5035 })`,
    `await connection.open()`. Wrap in a timeout (doochy uses ~15s).
@@ -110,8 +110,8 @@ Open API app credentials once; the app discovers every account under that grant
 4. `sendCommand("ProtoOAGetAccountListByAccessTokenReq", { accessToken })`
    → `ctidTraderAccount[]`. Each:
    - `ctidTraderAccountId` (int64, arrives as **string** → `Number()`)
-   - `traderLogin` (the 7-digit UI login — for display, NOT an identifier)
-   - `brokerName`, `isLive` (boolean or `"true"` string — test both)
+   - `traderLogin` (the 7-digit UI login, for display, NOT an identifier)
+   - `brokerName`, `isLive` (boolean or `"true"` string, test both)
 5. **Routing:** for each account, `host = acc.isLive ? "live.ctraderapi.com" :
    "demo.ctraderapi.com"`, port 5035. Emit the account list grouped/tagged
    demo vs live in the UI.
@@ -119,7 +119,7 @@ Open API app credentials once; the app discovers every account under that grant
    `sendCommand("ProtoOAAccountAuthReq", { ctidTraderAccountId, accessToken })`
    on the connection for that account's environment.
 
-### 4.3 Token refresh — single-use rotation (copy `src/ctrader/token.ts`)
+### 4.3 Token refresh: single-use rotation (copy `src/ctrader/token.ts`)
 
 - `sendCommand("ProtoOARefreshTokenReq", { refreshToken })`
   → `{ accessToken, refreshToken, expiresIn }`.
@@ -132,15 +132,15 @@ Open API app credentials once; the app discovers every account under that grant
   `CH_EXPIRED_ACCESS_TOKEN`, `INVALID_REQUEST` (copy doochy's `TOKEN_ERROR_CODES`,
   `src/ctrader/lifecycle.ts:36-42`), then retry once.
 
-### 4.4 Positions + orders — one call each (`ProtoOAReconcileReq`)
+### 4.4 Positions + orders: one call each (`ProtoOAReconcileReq`)
 
 `sendCommand("ProtoOAReconcileReq", { ctidTraderAccountId })` returns both:
 
-- `res.position[]` — open positions:
+- `res.position[]`, open positions:
   - `positionId`
   - `tradeData.{ symbolId, volume, tradeSide }` (`tradeSide`: `"BUY"`/`"SELL"`)
   - `price`, `stopLoss`, `takeProfit`, `commission`, `swap`
-- `res.order[]` — resting (pending) orders:
+- `res.order[]`, resting (pending) orders:
   - `orderId`
   - `orderType` (`"LIMIT"` / `"STOP"` / `"STOP_LOSS_TAKE_PROFIT"`)
   - `tradeData.{ symbolId, volume, tradeSide }`
@@ -152,11 +152,11 @@ orders read + `limitPrice`/`stopPrice` at ~:272-310), and the position reading
 in `src/copytrade/sourceWatcher.ts`.
 
 Shared rules:
-- int64 ids/timestamps arrive as **strings** — always `Number()`.
+- int64 ids/timestamps arrive as **strings**, always `Number()`.
 - Money scaling: integer fields scaled by `10^moneyDigits` (`moneyDigits ?? 2`)
-  — see `src/ctrader/account.ts`; optional, only needed if showing balance.
+  See `src/ctrader/account.ts`; optional, only needed if showing balance.
 
-### 4.5 Symbol resolution (names, lot size) — copy `src/ctrader/orders.ts:464`, `src/ctrader/symbols.ts`
+### 4.5 Symbol resolution (names, lot size): copy `src/ctrader/orders.ts:464`, `src/ctrader/symbols.ts`
 
 `symbolId` is broker-local per account. To display names:
 
@@ -176,7 +176,7 @@ to be useful.
 
 ### 4.7 Connection hygiene (do NOT skip)
 
-- **Never** open a socket per HTTP request — connects are slow. Keep a
+- **Never** open a socket per HTTP request; connects are slow. Keep a
   per-user, per-environment socket pool in memory (user → { demo?, live? }).
 - Only two connections max per user (one per env), each authed with the same
   app credentials; account scoping is per `ProtoOAAccountAuthReq` on the socket.
@@ -218,7 +218,7 @@ credentials  { userId, clientId, clientSecret, accessToken, refreshToken,
 - One open socket per user per env in server memory (pool keyed by userId+env).
 - JWT payload: `userId`; an `auth` middleware guards all `/api/*` except
   register/login.
-- Plaintext secrets accepted for now (explicitly temporary) — add a code comment
+- Plaintext secrets accepted for now (explicitly temporary), add a code comment
   that next iteration should encrypt `accessToken`/`refreshToken`/`clientSecret`
   at rest. Never write tokens to logs.
 
@@ -228,8 +228,8 @@ credentials  { userId, clientId, clientSecret, accessToken, refreshToken,
 - **Onboarding:** "Connect cTrader" form with the 4 credential fields →
   `POST /api/connect` → account list (demo vs live tagged).
 - **Dashboard:** global account selector across all accounts; two tabs:
-  - **Positions** — symbol, side, lots, entry, SL, TP, swap/commission, id.
-  - **Orders** — symbol, side, type (limit/stop), resting level, lots, SL, TP,
+  - **Positions**: symbol, side, lots, entry, SL, TP, swap/commission, id.
+  - **Orders**: symbol, side, type (limit/stop), resting level, lots, SL, TP,
     expiry (GTC vs dated).
 - Manual refresh button + auto-poll of the selected account.
 - Dark theme; state in plain React (no heavy state lib needed for Phase 1).
@@ -247,7 +247,7 @@ credentials  { userId, clientId, clientSecret, accessToken, refreshToken,
    (`server_name doochy.net; location / { proxy_pass http://127.0.0.1:9111; }`)
    + `certbot --nginx -d doochy.net`. Certbot is already in use on this box.
 
-Notes: `pm2` currently runs `hub`, `feed-server`, `source-node` — add `doochyweb`
+Notes: `pm2` currently runs `hub`, `feed-server`, `source-node`; add `doochyweb`
 without disturbing them. nginx config lives in `/etc/nginx/sites-enabled/default`.
 
 ## 9. Builder verification checklist
@@ -255,7 +255,7 @@ without disturbing them. nginx config lives in `/etc/nginx/sites-enabled/default
 - [ ] `pnpm typecheck` clean (covers `tsconfig.server.json` AND `src/webapp/tsconfig.json`); `pnpm build` succeeds.
 - [ ] No secrets in logs or git history.
 - [ ] Register + login work; `POST /api/connect` with real credentials returns
-      ALL accounts (demo + live tagged) — this proves `isLive` routing.
+      ALL accounts (demo + live tagged), which proves `isLive` routing.
 - [ ] Positions and Orders tabs render reconcilable data for at least one live
       and one demo account (both exist in the current grant).
 - [ ] Refresh-token rotation: after `/api/connect`, the credentials doc in Mongo
@@ -264,19 +264,19 @@ without disturbing them. nginx config lives in `/etc/nginx/sites-enabled/default
 - [ ] Serverside restart mid-session does not require re-entering credentials.
 - [ ] Poll loop never opens more than two sockets per user total.
 
-## 10. Phase 2 — manual order management (create / modify / close)
+## 10. Phase 2: manual order management (create / modify / close)
 
 Agreed direction (folded in 2026-09-14). This app already reads everything it
 needs (per-user per-env sockets with account re-auth + token rotation, cacheable
 symbol specs, a single-flight reconcile); phase 2 turns those read paths into
-manual writes. Use doochy **only** as protocol reference — do NOT port its
+manual writes. Use doochy **only** as protocol reference; do NOT port its
 automation: `/home/san/doochy/src/ctrader/orders.ts`, `amend.ts`,
 `risk/midnightClose.ts`, `bot/commands/order.ts`.
 
 ### Scope (in) / (out)
 - IN: place market/limit/stop orders; move a resting order's level + SL/TP;
   cancel a resting order; close a position; edit a position's SL/TP.
-- OUT: no doochy automation — no risk engine, cooldowns, profit caps, signal
+- OUT: no doochy automation, no risk engine, cooldowns, profit caps, signal
   sizing, or auto-anything. Manual management only; say so in UI copy.
 
 ### Broker calls (protocol only)
@@ -285,19 +285,19 @@ automation: `/home/san/doochy/src/ctrader/orders.ts`, `amend.ts`,
 | Market | `ProtoOANewOrderReq { orderType:"MARKET", tradeSide, volume, timeInForce:"IMMEDIATE_OR_CANCEL", label }` | label → accept/fill on `ProtoOAExecutionEvent` |
 | Limit/Stop | same req, `LIMIT`/`STOP`, `limitPrice`/`stopPrice`, `GOOD_TILL_CANCEL` (or `expirationTimestamp`), SL/TP attached | label |
 | Amend order | `ProtoOAAmendOrderReq { orderId, volume, limitPrice\|stopPrice, stopLoss?, takeProfit?, expirationTimestamp? }` | `clientMsgId`; confirm = `ORDER_REPLACED`, reject = `ProtoOAOrderErrorEvent` |
-| Cancel order | `ProtoOACancelOrderReq { orderId }` | — |
-| Close position | `ProtoOAClosePositionReq { positionId, volume }` | — |
-| Position SL/TP | `ProtoOAAmendPositionSLTPReq { positionId, stopLoss?, takeProfit? }` — amend **replaces** both sides, resend both | `clientMsgId` |
+| Cancel order | `ProtoOACancelOrderReq { orderId }` | - |
+| Close position | `ProtoOAClosePositionReq { positionId, volume }` | - |
+| Position SL/TP | `ProtoOAAmendPositionSLTPReq { positionId, stopLoss?, takeProfit? }`, amend **replaces** both sides, resend both | `clientMsgId` |
 
 There are **no synchronous responses**: every op resolves async via execution
 events with a timeout (doochy: 10s rest-ack, 30s market-fill, 5s amend). One
 shared `waitForOrderOutcome(msgId/label)` helper on `ProtoOAExecutionEvent` +
 `ProtoOAOrderErrorEvent`; order-error events echo `clientMsgId`.
 
-### Server — new `src/server/ctrader/execute.ts`
+### Server: new `src/server/ctrader/execute.ts`
 `placeOrder / amendOrder / cancelOrder / closePosition / amendPositionSLTP`,
 each returning `{ ok, error?, description? }`. Routes (all `authRequired`, all
-re-verify the ctid belongs to the user like index.ts:169–174):
+re-verify the ctid belongs to the user like index.ts:169-174):
 ```
 POST   /api/accounts/:ctid/orders                  { orderType, side, lots, price?, sl?, tp?, expiration? }
 PATCH  /api/accounts/:ctid/orders/:orderId         { price?, sl?, tp? }   (omit/null = keep)
@@ -307,7 +307,7 @@ PATCH  /api/accounts/:ctid/positions/:positionId   { sl?, tp? }
 ```
 Validation (server-authoritative; mirror doochy but REJECT, don't silently
 drop): BUY `SL < entry < TP`, SELL `TP < entry < SL`; volume snapped to the
-symbol grid (`minVolume`/`stepVolume`/`maxVolume` — extend the `reads.ts` spec
+symbol grid (`minVolume`/`stepVolume`/`maxVolume`, extend the `reads.ts` spec
 cache which currently lacks these); price rounded to symbol `digits`; only
 entry (`LIMIT`/`STOP`) orders are cancellable/amendable. At-most-once per-account
 op latch so a double-click can't double-submit; errors surfaced as
@@ -333,7 +333,7 @@ through `pnpm typecheck` + `pnpm build`.
 ## 11. Later roadmap (not this build)
 
 Deals/history (ProtoOADealListReq), equity graph, live quotes
-(ProtoOASubscribeSpotsReq — see `src/ctrader/livePrices.ts`), embedded cTrader
+(ProtoOASubscribeSpotsReq, see `src/ctrader/livePrices.ts`), embedded cTrader
 `market-chart` widget (view-only embed works without a login; changing symbol =
 re-running `runPlugin` with a new route; it cannot overlay your own
 entries/SL/TP), encrypted-at-rest credentials.

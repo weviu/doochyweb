@@ -455,7 +455,7 @@ export default function FilterBar({
               value={state.netMin ?? ""}
               onChange={(e) => onChange({ netMin: e.target.value === "" ? null : Number(e.target.value) })}
             />
-            <span className="text-xs text-fg-muted">–</span>
+            <span className="text-xs text-fg-muted">-</span>
             <input
               type="number"
               className="w-[64px] rounded-lg border border-hairline-strong bg-soft px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"
@@ -477,7 +477,7 @@ export default function FilterBar({
               value={state.distMin ?? ""}
               onChange={(e) => onChange({ distMin: e.target.value === "" ? null : Number(e.target.value) })}
             />
-            <span className="text-xs text-fg-muted">–</span>
+            <span className="text-xs text-fg-muted">-</span>
             <input
               type="number"
               className="w-[60px] rounded-lg border border-hairline-strong bg-soft px-2 py-1.5 text-xs text-fg placeholder:text-fg-faint focus:border-accent/60 focus:outline-none focus:ring-2 focus:ring-accent/40"

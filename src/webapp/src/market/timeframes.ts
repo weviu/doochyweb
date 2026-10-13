@@ -3,6 +3,8 @@
 // before that request resolves, so the tab strip can render immediately.
 
 export const timeframes = [
+  { id: "1m", label: "1 min" },
+  { id: "3m", label: "3 min" },
   { id: "5m", label: "5 min" },
   { id: "15m", label: "15 min" },
   { id: "30m", label: "30 min" },

@@ -9,11 +9,19 @@ import SettingsPage from "./Settings";
 import { useAccounts } from "./useAccounts";
 import { Skeleton } from "./components/ui";
 
+// The Analysis page is public: market quotes and the shared watchlist carry no
+// account data, so a visitor can use it without an account. The Trading tab
+// holds cTrader credentials, positions and orders, so it stays behind auth.
 export default function App() {
   const [token, setTokenState] = useState<string | null>(() => getToken());
   const [booting, setBooting] = useState<boolean>(() => !!getToken());
+  const [view, setView] = useState<ViewKey>("analysis");
+  const [showSettings, setShowSettings] = useState(false);
+  const signedIn = !!token;
+  const { accounts, setAccounts, hasCredentials, load, refreshBalances, connect } =
+    useAccounts(signedIn);
 
-  // Validate the stored token once on load; if it expired we fall back to login.
+  // Validate a stored token once on load; drop it if it expired.
   if (booting && token) {
     return (
       <BootstrapGate
@@ -28,55 +36,26 @@ export default function App() {
     );
   }
 
-  if (!token) {
-    return (
-      <Login
-        onAuthed={(t) => {
-          setToken(t);
-          setTokenState(t);
-        }}
-      />
-    );
-  }
-
-  return (
-    <AuthedApp
-      onLogout={() => {
-        setToken(null);
-        setTokenState(null);
-      }}
-    />
-  );
-}
-
-// Credential entry and settings are full-screen takeovers that sit outside the
-// shell, so they are routed here rather than inside either view.
-function AuthedApp({ onLogout }: { onLogout: () => void }) {
-  const [view, setView] = useState<ViewKey>("analysis");
-  const [showSettings, setShowSettings] = useState(false);
-  const { accounts, setAccounts, hasCredentials, load, refreshBalances, connect } = useAccounts();
-
   async function handleConnected(creds: ConnectInput) {
     await connect(creds);
     await refreshBalances();
   }
 
-  if (hasCredentials === null) {
-    return (
-      <div className="flex min-h-screen items-center justify-center p-6">
-        <div className="w-full max-w-sm space-y-3">
-          <Skeleton className="h-32 w-full" />
-          <Skeleton className="h-10 w-full" />
-        </div>
-      </div>
-    );
+  function handleAuthed(t: string) {
+    setToken(t);
+    setTokenState(t);
   }
 
-  if (!hasCredentials) {
-    return <ConnectPanel onConnected={handleConnected} />;
+  function handleLogout() {
+    setToken(null);
+    setTokenState(null);
+    setShowSettings(false);
+    setView("analysis");
   }
 
-  if (showSettings) {
+  // Settings manages cTrader credentials, so it is a takeover for signed-in
+  // users only and sits outside the shell.
+  if (showSettings && signedIn) {
     return (
       <SettingsPage
         accounts={accounts}
@@ -94,19 +73,37 @@ function AuthedApp({ onLogout }: { onLogout: () => void }) {
     <AppShell
       view={view}
       onViewChange={setView}
-      onRefresh={view === "trading" ? refreshBalances : undefined}
+      onRefresh={signedIn ? refreshBalances : undefined}
+      signedIn={signedIn}
       onOpenSettings={() => setShowSettings(true)}
-      onLogout={onLogout}
+      onSignIn={() => setView("trading")}
+      onLogout={handleLogout}
     >
-      {view === "trading" ? (
-        <Dashboard accounts={accounts} />
+      {view === "analysis" ? (
+        <AnalysisPage canWrite={signedIn} />
+      ) : !signedIn ? (
+        <div className="flex justify-center py-8">
+          <Login
+            variant="inline"
+            onAuthed={handleAuthed}
+            hint="Sign in to view and manage your cTrader accounts. Market analysis above is public."
+          />
+        </div>
+      ) : hasCredentials === null ? (
+        <div className="mx-auto w-full max-w-sm space-y-3 py-8">
+          <Skeleton className="h-32 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
+      ) : !hasCredentials ? (
+        <ConnectPanel onConnected={handleConnected} />
       ) : (
-        <AnalysisPage />
+        <Dashboard accounts={accounts} />
       )}
     </AppShell>
   );
 }
 
+// Rendered instead of the shell only while a stored token is being verified.
 function BootstrapGate({
   token,
   onValid,

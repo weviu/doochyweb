@@ -322,10 +322,14 @@ export function Collapse({ open, children }: { open: boolean; children: ReactNod
 // async commit shows a small spinner in place of the knob transition.
 export function Toggle({
   label,
+  ariaLabel,
   checked,
   onToggle,
 }: {
   label: string;
+  // When the visible label is empty (or the meaning is only in surrounding
+  // copy), supply an accessible name so the control is still announced.
+  ariaLabel?: string;
   checked: boolean;
   onToggle: (next: boolean) => void;
 }) {
@@ -333,6 +337,8 @@ export function Toggle({
     <button
       type="button"
       onClick={() => onToggle(!checked)}
+      aria-pressed={checked}
+      aria-label={ariaLabel || label || undefined}
       className="flex items-center gap-2 text-left select-none"
     >
       <span
@@ -348,7 +354,7 @@ export function Toggle({
           }
         />
       </span>
-      <span className="text-xs font-medium text-fg-muted">{label}</span>
+      {label && <span className="text-xs font-medium text-fg-muted">{label}</span>}
     </button>
   );
 }

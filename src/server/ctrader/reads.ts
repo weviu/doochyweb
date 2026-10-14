@@ -395,6 +395,18 @@ export async function listAccounts(userId: string): Promise<AccountView[]> {
   return accounts;
 }
 
+// Every tradable symbol name on the account, from the per-account metadata
+// cache (populated by the symbols-list + asset-list round trip in symbolMeta).
+// Used to resolve a market symbol to a broker symbolId.
+export async function listTradableNames(
+  userId: string,
+  env: CtraderEnv,
+  ctid: number
+): Promise<string[]> {
+  const meta = await symbolMeta(userId, env, ctid);
+  return [...meta.nameToId.keys()];
+}
+
 // Clean up when a user disconnects (token revoked, etc.)
 export function clearSymbolCache(ctid: number): void {
   symbolMetaCache.delete(String(ctid));

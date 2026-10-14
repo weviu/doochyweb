@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, RefreshCw, Settings2 } from "lucide-react";
+import { AlertCircle, AlertTriangle, RefreshCw, Settings2 } from "lucide-react";
 
 import { marketApi } from "../api";
 import { FadeRise } from "../components/motion";
@@ -7,6 +7,8 @@ import { Card } from "../components/ui";
 import { MarketCard, MarketCardError, MarketCardSkeleton } from "./MarketCard";
 import { MarketDetail } from "./MarketDetail";
 import { MarketSettingsSheet } from "./MarketSettingsSheet";
+import { SortableGrid } from "./SortableGrid";
+import { applyOrder } from "./order";
 import { SymbolSearch } from "./SymbolSearch";
 import { DEFAULT_TIMEFRAME, timeframes as staticTimeframes } from "./timeframes";
 import type { CatalogEntry, MarketResult, MarketSettings } from "./types";
@@ -25,6 +27,7 @@ export default function AnalysisPage({ canWrite }: { canWrite: boolean }) {
   const [updatedAt, setUpdatedAt] = useState(0);
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [refreshing, setRefreshing] = useState<ReadonlySet<string>>(new Set());
+  const [order, setOrder] = useState<string[]>([]);
 
   const [detail, setDetail] = useState<{ symbol: string; timeframe: string } | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -59,6 +62,14 @@ export default function AnalysisPage({ canWrite }: { canWrite: boolean }) {
   // One-shot bootstrap: config + watchlist drives the initial render.
   useEffect(() => {
     let alive = true;
+    // The saved card layout comes from the watchlist read; failing to load it
+    // just leaves the grid in watchlist order.
+    marketApi
+      .watchlist()
+      .then((r) => {
+        if (alive && Array.isArray(r.order)) setOrder(r.order);
+      })
+      .catch(() => {});
     marketApi
       .config()
       .then((c) => {
@@ -116,6 +127,19 @@ export default function AnalysisPage({ canWrite }: { canWrite: boolean }) {
 
   // Stable per-card handlers: the cards are memoised, so handing them a fresh
   // closure each render would defeat the memo entirely.
+  const persistOrder = useCallback(
+    (next: MarketResult[]) => {
+      const symbols = next.map((r) => r.symbol);
+      setResults(next);
+      setOrder(symbols);
+      marketApi.saveOrder(symbols).catch((err) => {
+        // Layout is cosmetic; a failed save should not disrupt the page.
+        setError(err instanceof Error ? err.message : "Failed to save layout");
+      });
+    },
+    []
+  );
+
   const openDetail = useCallback(
     (symbol: string) => setDetail({ symbol, timeframe }),
     [timeframe]
@@ -144,12 +168,8 @@ export default function AnalysisPage({ canWrite }: { canWrite: boolean }) {
   );
 
   const okCount = results.filter((r) => r.ok).length;
-  const simCount = results.filter((r) => r.ok && r.simulated).length;
-  // Markets showing simulator output because a real source is down. Worth an
-  // explicit callout: the prices on those cards are not real.
-  const degraded = results.filter(
-    (r) => r.ok && r.simulated && (r.warnings?.length ?? 0) > 0
-  ).length;
+  // Cards whose read fell back to a cached set because cTrader is throttling.
+  const throttled = results.filter((r) => r.ok && (r.warnings?.length ?? 0) > 0).length;
 
   return (
     <FadeRise>
@@ -187,21 +207,25 @@ export default function AnalysisPage({ canWrite }: { canWrite: boolean }) {
           loading={loading}
           okCount={okCount}
           total={results.length}
-          simCount={simCount}
           secondsLeft={secondsLeft}
           onOpenSettings={() => setShowSettings(true)}
           onRefresh={() => void load()}
         />
 
-        {degraded > 0 && (
+        {settings?.accountError && (
+          <Card className="border-danger/30 bg-danger-soft p-3.5 text-[13px] leading-relaxed text-fg-muted">
+            <AlertCircle className="mr-2 inline h-4 w-4 align-[-3px] text-danger" />
+            <span className="text-fg">{settings.accountError}</span>
+          </Card>
+        )}
+
+        {throttled > 0 && (
           <div className="flex items-start gap-3 rounded-2xl border border-accent/25 bg-gradient-to-r from-accent/12 to-blue-500/8 p-3.5 text-[13px] leading-relaxed text-fg-muted">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
             <span>
-              {degraded} market{degraded === 1 ? "" : "s"} showing{" "}
-              <strong className="text-fg">simulated</strong> data because every real source
-              failed or is temporarily disabled. Set{" "}
-              <code className="text-accent">TWELVEDATA_API_KEY</code> in the server environment to
-              get real forex, metals, index and stock prices.
+              cTrader throttled the last sweep, so {throttled} card
+              {throttled === 1 ? "" : "s"} {throttled === 1 ? "is" : "are"} showing cached bars.
+              Figures stay correct, just a few minutes behind.
             </span>
           </div>
         )}
@@ -224,11 +248,14 @@ export default function AnalysisPage({ canWrite }: { canWrite: boolean }) {
             <div className="mt-1 text-xs text-fg-faint">Add a market above to start analysing.</div>
           </Card>
         ) : (
-          <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(290px,1fr))]">
-            {results.map((r) =>
+          <SortableGrid
+            items={applyOrder(results, order)}
+            onReorder={persistOrder}
+            canReorder={canWrite}
+            className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(290px,1fr))]"
+            renderItem={(r) =>
               r.ok ? (
                 <MarketCard
-                  key={r.symbol}
                   analysis={r}
                   strongRatio={strongRatio}
                   refreshing={refreshing.has(r.symbol)}
@@ -239,7 +266,6 @@ export default function AnalysisPage({ canWrite }: { canWrite: boolean }) {
                 />
               ) : (
                 <MarketCardError
-                  key={r.symbol}
                   symbol={r.symbol}
                   error={r.error}
                   refreshing={refreshing.has(r.symbol)}
@@ -248,13 +274,13 @@ export default function AnalysisPage({ canWrite }: { canWrite: boolean }) {
                   onRemove={removeSymbol}
                 />
               )
-            )}
-          </div>
+            }
+          />
         )}
 
         <p className="pb-2 text-center text-[11px] leading-relaxed text-fg-faint">
           Indicators computed server-side (RSI, STOCH, MACD, ADX, CCI, Williams %R, ATR, Ultimate
-          Oscillator, ROC, Bull/Bear Power, SMA/EMA 5-200). Not financial advice.
+          Oscillator, ROC, Bull/Bear Power, SMA/EMA 5-200). Read from your cTrader account. Not financial advice.
         </p>
       </div>
 
@@ -291,7 +317,6 @@ function StatusLine({
   loading,
   okCount,
   total,
-  simCount,
   secondsLeft,
   onOpenSettings,
   onRefresh,
@@ -299,7 +324,6 @@ function StatusLine({
   loading: boolean;
   okCount: number;
   total: number;
-  simCount: number;
   secondsLeft: number;
   onOpenSettings: () => void;
   onRefresh: () => void;
@@ -309,7 +333,7 @@ function StatusLine({
       <span className="text-fg-muted">
         {loading
           ? "Updating…"
-          : `${okCount}/${total} markets analysed${simCount ? ` · ${simCount} simulated` : ""}`}
+          : `${okCount}/${total} markets analysed from cTrader`}
       </span>
       <span className="flex items-center gap-2 text-fg-faint">
         {secondsLeft > 0 && !loading && <span>Next refresh in {secondsLeft}s</span>}

@@ -26,11 +26,7 @@ export const ZONE_ORDER: Rating[] = ["strong_sell", "sell", "neutral", "buy", "s
 export const ZONE_COLORS = ZONE_ORDER.map((r) => RATINGS[r].color);
 
 export const PROVIDERS: Record<string, string> = {
-  binance: "Binance",
-  twelvedata: "Twelve Data",
-  yahoo: "Yahoo Finance",
-  stooq: "Stooq",
-  simulated: "Simulated",
+  ctrader: "cTrader",
 };
 
 export function ratingColor(rating: string | undefined): string {

@@ -98,13 +98,7 @@ export function MarketDetail({
           </>
         ) : null
       }
-      subtitle={
-        a ? (
-          `${providerName(a.provider)}${a.simulated ? " · simulated" : ""}`
-        ) : (
-          "Loading…"
-        )
-      }
+      subtitle={a ? providerName(a.provider) : "Loading…"}
     >
       {/* Wide content: the indicator tables need more room than the default sheet. */}
       <div className="-mx-1">
@@ -208,9 +202,8 @@ export function MarketDetail({
 
               <div className="flex flex-wrap items-center gap-2 border-t border-hairline pt-3 text-xs text-fg-faint">
                 <Badge tone="muted">
-                  <span className={`h-1.5 w-1.5 rounded-full ${a.simulated ? "bg-violet-400" : "bg-success"}`} />
-                  {a.simulated ? "Simulated data" : providerName(a.provider)}
-                  {a.proxy ? ` · ${a.proxy}` : ""}
+                  <span className="h-1.5 w-1.5 rounded-full bg-success" />
+                  {providerName(a.provider)}
                 </Badge>
                 <span>
                   {a.candles} candles · {timeframe} · updated {timeAgo(a.updatedAt)}

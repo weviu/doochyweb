@@ -1,43 +1,52 @@
+// Request pacing for the cTrader feed.
+//
+// Two independent limits are enforced here, both measured against the live
+// endpoint rather than assumed:
+//
+//   1. Concurrency. cTrader answers BLOCKED_PAYLOAD_TYPE / "You are being rate
+//      limited" once more than FIVE ProtoOAGetTrendbarsReq requests are in
+//      flight on one socket. Measured: 4 concurrent -> all OK; 8 -> 5 OK and 3
+//      blocked; 12 -> 5 OK and 7 blocked. So the ceiling is enforced with a
+//      semaphore at MAX_IN_FLIGHT, below the observed limit on purpose.
+//   2. Rate. The same volume spaced out is fine: 12 requests at 250ms apart
+//      completed in 4.0s with nothing blocked. So a small token bucket keeps a
+//      re-run from tripping the limit again immediately.
+//
+// An earlier version allowed one request per 1.2s and, worse, multiplied the
+// wait by the queue length, so a 7-symbol sweep took 6.9s even though the broker
+// answers in about 65ms. Nothing here needs to be that slow.
 import type { ProviderId } from "../types";
 
-// Per-provider request pacing.
-//
-// Twelve Data's free tier allows 8 credits per minute. A watchlist sweep issues
-// one request per symbol per timeframe, so any sweep wider than a handful of
-// symbols blew straight through the quota and the API answered 429. Every
-// symbol then fell through to its next provider, which for forex and indices
-// meant no data at all.
-//
-// Pacing the requests instead is much better than absorbing 429s: the sweep
-// still completes, it just takes as long as the quota allows. This is a token
-// bucket per provider, with waiters served in order.
+
+/** Ceiling on requests in flight on the socket. The broker starts refusing
+ *  above 5, so stay clear of it. */
+export const MAX_IN_FLIGHT = 4;
+
+/** Steady-state spacing between request starts. */
+const MIN_SPACING_MS = 200;
+
+const REFILL_INTERVAL_MS = 60_000;
 
 interface Policy {
-  /** Burst allowance. */
+  /** Burst allowance (tokens). */
   capacity: number;
   /** Steady-state refill, per minute. */
   perMinute: number;
 }
 
-// null means "no pacing": local or effectively unlimited providers.
 const POLICIES: Record<ProviderId, Policy | null> = {
-  // Free tier is 8 credits/minute. Not the documented 800/day figure: the
-  // per-minute ceiling is what a burst actually hits.
-  twelvedata: { capacity: 8, perMinute: 8 },
-  binance: { capacity: 60, perMinute: 1200 },
-  binanceFutures: { capacity: 60, perMinute: 1200 },
-  // Yahoo rate-limits by volume over a window, so keep bursts small.
-  yahoo: { capacity: 10, perMinute: 120 },
-  stooq: null,
-  simulated: null,
+  // capacity 4 at one request per 200ms = 300/min, comfortably above what the
+  // broker serves but well under anything that trips the throttle.
+  ctrader: { capacity: 4, perMinute: 300 },
 };
-
-const REFILL_INTERVAL_MS = 60_000;
 
 interface Bucket {
   tokens: number;
   lastRefill: number;
-  queue: (() => void)[];
+  /** Requests admitted but still on the wire. */
+  inFlight: number;
+  /** FIFO of waiters, each with its own wake-up timer. */
+  queue: { resolve: () => void; timer: ReturnType<typeof setTimeout> | null }[];
 }
 
 const buckets = new Map<ProviderId, Bucket>();
@@ -47,7 +56,7 @@ function bucketFor(provider: ProviderId): Bucket | null {
   if (!policy) return null;
   let b = buckets.get(provider);
   if (!b) {
-    b = { tokens: policy.capacity, lastRefill: Date.now(), queue: [] };
+    b = { tokens: policy.capacity, lastRefill: Date.now(), inFlight: 0, queue: [] };
     buckets.set(provider, b);
   }
   return b;
@@ -61,39 +70,81 @@ function refill(b: Bucket, policy: Policy): void {
   b.lastRefill = now;
 }
 
-/** Take one slot, waiting if the bucket is empty. Resolves immediately when the
- *  provider has no pacing policy. */
-export function acquire(provider: ProviderId): Promise<void> {
+/** Hand the slot straight to the head of the queue when one is waiting. */
+function pump(provider: ProviderId, b: Bucket, policy: Policy): void {
+  while (b.queue.length > 0 && b.inFlight < MAX_IN_FLIGHT) {
+    const waiter = b.queue.shift()!;
+    if (waiter.timer) clearTimeout(waiter.timer);
+    b.tokens = Math.max(0, b.tokens - 1);
+    b.inFlight += 1;
+    waiter.resolve();
+  }
+}
+
+/**
+ * Wait until a request may start. Call release() when the request settles, so
+ * the in-flight count stays honest.
+ */
+export function acquire(provider: ProviderId): Promise<() => void> {
   const policy = POLICIES[provider];
   const b = bucketFor(provider);
-  if (!policy || !b) return Promise.resolve();
+  if (!policy || !b) return Promise.resolve(() => {});
 
-  refill(b, policy);
-  if (b.tokens >= 1 && b.queue.length === 0) {
-    b.tokens -= 1;
-    return Promise.resolve();
-  }
+  return new Promise<() => void>((resolve) => {
+    refill(b, policy);
+    const head = b.queue.length === 0;
 
-  return new Promise((resolve) => {
-    b!.queue.push(resolve);
-    const msPerToken = REFILL_INTERVAL_MS / policy.perMinute;
-    const waitFor = msPerToken * Math.max(1, b!.queue.length);
-    setTimeout(() => {
-      refill(b!, policy);
-      const next = b!.queue.shift();
-      if (next) {
-        b!.tokens = Math.max(0, b!.tokens - 1);
-        next();
-      }
-    }, waitFor);
+    // Immediate admission: a free token, room on the wire, and nobody waiting
+    // ahead of us. Otherwise queue, and let pump() hand over in FIFO order.
+    if (head && b.tokens >= 1 && b.inFlight < MAX_IN_FLIGHT) {
+      b.tokens -= 1;
+      b.inFlight += 1;
+      return resolve(release(b));
+    }
+
+    const waiter = { resolve: () => {}, timer: null as ReturnType<typeof setTimeout> | null };
+    waiter.resolve = () => resolve(release(b));
+    b.queue.push(waiter);
+
+    // Spacing timer. This is a FIXED delay, not one scaled by queue depth:
+    // a deep queue drains at the configured rate instead of each waiter
+    // inheriting a longer and longer wait.
+    waiter.timer = setTimeout(() => {
+      const at = b.queue.indexOf(waiter);
+      if (at === -1) return;
+      b.queue.splice(at, 1);
+      refill(b, policy);
+      b.tokens = Math.max(0, b.tokens - 1);
+      b.inFlight += 1;
+      waiter.resolve();
+    }, MIN_SPACING_MS);
   });
+}
+
+function release(b: Bucket): () => void {
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    b.inFlight = Math.max(0, b.inFlight - 1);
+  };
 }
 
 /** Drop all pacing state. Used by clearCache() and the tests. */
 export function reset(): void {
   for (const b of buckets.values()) {
-    for (const resolve of b.queue) resolve();
+    for (const waiter of b.queue) {
+      if (waiter.timer) clearTimeout(waiter.timer);
+      waiter.resolve();
+    }
     b.queue = [];
   }
   buckets.clear();
+}
+
+/** Introspection for tests and diagnostics. */
+export function stats(provider: ProviderId): { inFlight: number; queued: number; tokens: number } | null {
+  const b = buckets.get(provider);
+  if (!b) return null;
+  return { inFlight: b.inFlight, queued: b.queue.length, tokens: Number(b.tokens.toFixed(2)) };
 }

@@ -2,15 +2,14 @@
 //
 // This is a single global document (`_id: "global"`) shared by every user: the
 // market watchlist is not user-specific data, and this is a personal deployment.
-// Ported from the standalone `gauge` project, which kept the same data in
-// `data/watchlist.json` and `data/settings.json`.
 //
-// The Twelve Data API key is intentionally NOT a field. It is read from the
-// TWELVEDATA_API_KEY environment variable only, so no third-party secret is ever
-// written to the database.
+// cTrader credentials are NOT here. They live in the credentials collection,
+// one document per user, and the page is powered by whichever account
+// resolveMarketAccount() selects. Nothing from that document is ever exposed.
 
 import mongoose from "mongoose";
 
+import { describeMarketAccount } from "./account";
 import { DEFAULT_TIMEFRAME, isTimeframeId } from "./timeframes";
 import type { AnalysisSettings } from "./types";
 
@@ -19,13 +18,12 @@ const GLOBAL_ID = "global";
 const DEFAULT_WATCHLIST = [
   "XAUUSD",
   "XAGUSD",
-  "BTCUSD",
-  "ETHUSD",
   "EURUSD",
   "GBPUSD",
   "US500",
   "NAS100",
-  "SOLUSD",
+  "BTCUSD",
+  "ETHUSD",
 ];
 
 const DEFAULT_SETTINGS = {
@@ -33,19 +31,15 @@ const DEFAULT_SETTINGS = {
   refreshSeconds: 60,
   defaultTimeframe: DEFAULT_TIMEFRAME,
   strongRatio: 0.25,
-  // Off by default. A market with no working data source shows an explicit
-  // error rather than an invented price, because a plausible-looking fake
-  // price is far worse than a visible gap.
-  allowSimulated: false,
 };
 
 const marketSettingsSchema = new mongoose.Schema({
   _id: { type: String, required: true, default: GLOBAL_ID },
   watchlist: { type: [String], default: () => [...DEFAULT_WATCHLIST] },
+  cardOrder: { type: [String], default: () => [] },
   refreshSeconds: { type: Number, default: DEFAULT_SETTINGS.refreshSeconds },
   defaultTimeframe: { type: String, default: DEFAULT_SETTINGS.defaultTimeframe },
   strongRatio: { type: Number, default: DEFAULT_SETTINGS.strongRatio },
-  allowSimulated: { type: Boolean, default: DEFAULT_SETTINGS.allowSimulated },
   updatedAt: { type: Date, default: Date.now },
 });
 
@@ -53,10 +47,12 @@ export const MarketSettings = mongoose.model("MarketSettings", marketSettingsSch
 
 export interface StoredMarketSettings {
   watchlist: string[];
+  /** Saved card layout from drag-and-drop. Symbols absent from it keep their
+   *  watchlist order and are appended after the ones that are listed. */
+  cardOrder: string[];
   refreshSeconds: number;
   defaultTimeframe: string;
   strongRatio: number;
-  allowSimulated: boolean;
 }
 
 // Environment overrides win over the stored values so the app can be configured
@@ -83,16 +79,21 @@ export async function getSettings(): Promise<StoredMarketSettings> {
     Array.isArray(doc?.watchlist) && doc.watchlist.length ? doc.watchlist : [...DEFAULT_WATCHLIST];
   return withEnvOverrides({
     watchlist,
+    cardOrder: Array.isArray(doc?.cardOrder) ? doc.cardOrder : [],
     refreshSeconds: doc?.refreshSeconds ?? DEFAULT_SETTINGS.refreshSeconds,
     defaultTimeframe: doc?.defaultTimeframe ?? DEFAULT_SETTINGS.defaultTimeframe,
     strongRatio: doc?.strongRatio ?? DEFAULT_SETTINGS.strongRatio,
-    allowSimulated: doc?.allowSimulated ?? DEFAULT_SETTINGS.allowSimulated,
   });
+}
+
+function normalizeList(list: string[]): string[] {
+  return [...new Set(list.map((s) => String(s).toUpperCase()))].slice(0, 60);
 }
 
 export async function updateSettings(patch: Partial<StoredMarketSettings>): Promise<StoredMarketSettings> {
   const $set: Record<string, unknown> = { updatedAt: new Date() };
   if (Array.isArray(patch.watchlist)) $set.watchlist = normalizeList(patch.watchlist);
+  if (Array.isArray(patch.cardOrder)) $set.cardOrder = normalizeList(patch.cardOrder);
   if (patch.refreshSeconds != null) $set.refreshSeconds = Math.max(10, Number(patch.refreshSeconds) || 60);
   if (patch.defaultTimeframe != null && isTimeframeId(String(patch.defaultTimeframe))) {
     $set.defaultTimeframe = String(patch.defaultTimeframe);
@@ -101,13 +102,8 @@ export async function updateSettings(patch: Partial<StoredMarketSettings>): Prom
     const n = Number(patch.strongRatio);
     if (Number.isFinite(n) && n > 0 && n <= 1) $set.strongRatio = n;
   }
-  if (patch.allowSimulated != null) $set.allowSimulated = Boolean(patch.allowSimulated);
   await MarketSettings.updateOne({ _id: GLOBAL_ID }, { $set }, { upsert: true }).exec();
   return getSettings();
-}
-
-function normalizeList(list: string[]): string[] {
-  return [...new Set(list.map((s) => String(s).toUpperCase()))].slice(0, 60);
 }
 
 export async function getWatchlist(): Promise<string[]> {
@@ -133,18 +129,63 @@ export async function addToWatchlist(symbol: string): Promise<string[]> {
 
 export async function removeFromWatchlist(symbol: string): Promise<string[]> {
   const upper = String(symbol).toUpperCase();
-  return setWatchlist((await getWatchlist()).filter((s) => s !== upper));
+  const current = await getSettings();
+  await MarketSettings.updateOne(
+    { _id: GLOBAL_ID },
+    {
+      $set: {
+        watchlist: current.watchlist.filter((s) => s !== upper),
+        cardOrder: current.cardOrder.filter((s) => s !== upper),
+        updatedAt: new Date(),
+      },
+    },
+    { upsert: true }
+  ).exec();
+  return getWatchlist();
 }
 
-/** The shape the API returns: no secrets, just the knobs plus whether a
- *  Twelve Data key is configured on the server. */
+/** Persist a dragged card layout. Symbols not in the watchlist are ignored. */
+export async function saveCardOrder(order: string[]): Promise<string[]> {
+  const watchlist = await getWatchlist();
+  const valid = new Set(watchlist);
+  const clean = normalizeList(order).filter((s) => valid.has(s));
+  await MarketSettings.updateOne(
+    { _id: GLOBAL_ID },
+    { $set: { cardOrder: clean, updatedAt: new Date() } },
+    { upsert: true }
+  ).exec();
+  return clean;
+}
+
+/** The knobs plus which cTrader account is supplying prices. Never any
+ *  credential material. */
 export async function publicSettings(): Promise<AnalysisSettings> {
   const s = await getSettings();
+  const info = await describeMarketAccount();
+  let symbolCount = 0;
+  if (info.account) {
+    // Served from the per-account symbol cache after the first call, so this is
+    // cheap enough to include on a config read.
+    try {
+      const { cTraderCatalog } = await import("./providers/ctrader");
+      symbolCount = (await cTraderCatalog()).length;
+    } catch {
+      symbolCount = 0;
+    }
+  }
   return {
     refreshSeconds: s.refreshSeconds,
     defaultTimeframe: s.defaultTimeframe,
     strongRatio: s.strongRatio,
-    allowSimulated: s.allowSimulated,
-    twelvedataKeySet: Boolean(process.env.TWELVEDATA_API_KEY),
+    account: info.account
+      ? {
+          ctid: info.account.ctid,
+          login: info.login ?? 0,
+          broker: info.broker ?? "unknown broker",
+          isLive: info.account.isLive,
+          symbolCount,
+        }
+      : null,
+    accountError: info.error,
   };
 }

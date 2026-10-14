@@ -9,11 +9,11 @@ import { describe, test } from "node:test";
 
 import { analyze, RATINGS } from "../src/server/market/analysis";
 import * as ti from "../src/server/market/indicators";
-import { resolveSymbol } from "../src/server/market/symbols";
-import { fetchCandles as simulatedCandles } from "../src/server/market/providers/simulated";
+import { buildCatalog, resolveAgainstBroker, toSymbolMeta, searchCatalog } from "../src/server/market/symbols";
 import { noSourceError } from "../src/server/market/providers/index";
 import * as breaker from "../src/server/market/providers/breaker";
 import type { Candle, Timeframe } from "../src/server/market/types";
+import { applyOrder, moveTo, dropIndex } from "../src/webapp/src/market/order";
 
 // Deterministic OHLC series: a slow sine drift around price 100, so every
 // indicator has something non-degenerate to chew on.
@@ -111,56 +111,102 @@ describe("analysis", () => {
   });
 });
 
-describe("symbols", () => {
-  test("resolves forex, metals, crypto, index and stock", () => {
-    assert.equal(resolveSymbol("EUR/USD").type, "forex");
-    assert.equal(resolveSymbol("eurusd").providers.twelvedata, "EUR/USD");
-    assert.equal(resolveSymbol("XAUUSD").type, "commodity");
-    assert.equal(resolveSymbol("XAUUSD").providers.binance, "PAXGUSDT");
-    assert.equal(resolveSymbol("BTC/USDT").symbol, "BTCUSD");
-    assert.equal(resolveSymbol("btcusdt").providers.binance, "BTCUSDT");
-    assert.equal(resolveSymbol("US500").type, "index");
-    assert.equal(resolveSymbol("AAPL").type, "stock");
-  });
-});
-
-describe("data source failure reporting", () => {
-  // The "no data source" message is the only diagnostic a user gets when a
-  // market cannot be priced, so it must name the providers and why each failed.
-  // An earlier edit dropped the interpolation and shipped a bare sentence.
-  test("names every provider and its reason, plus the way out", () => {
+describe("cTrader bar reading", () => {
+  // The failure message is the only diagnostic a user gets when a market cannot
+  // be priced, so it must say what failed and why. An earlier edit dropped the
+  // interpolation and shipped a bare sentence.
+  test("names the source and the reason", () => {
     const msg = noSourceError([
-      { provider: "twelvedata", message: "HTTP 404: available starting with the Grow plan" },
-      { provider: "yahoo", message: "HTTP 429" },
-      { provider: "stooq", message: "This operation was aborted" },
+      { provider: "ctrader", message: "only 12 bars (broker history may not reach that far back)" },
     ]);
-    assert.match(msg, /No data source available/);
-    assert.match(msg, /twelvedata: HTTP 404: available starting with the Grow plan/);
-    assert.match(msg, /yahoo: HTTP 429/);
-    assert.match(msg, /stooq: This operation was aborted/);
-    assert.match(msg, /TWELVEDATA_API_KEY/, "should say how to fix it");
+    assert.match(msg, /Could not read bars from cTrader/);
+    assert.match(msg, /only 12 bars/);
   });
 
   test("is specific rather than a bare sentence", () => {
-    const msg = noSourceError([{ provider: "yahoo", message: "HTTP 429" }]);
+    const msg = noSourceError([{ provider: "ctrader", message: "rate limited" }]);
     assert.ok(msg.length > 60, `message too short to diagnose: ${msg}`);
   });
 });
 
-describe("metals coverage", () => {
-  // Spot has gold only (PAXG/XAUT); silver, platinum and palladium live on
-  // Binance USD-M futures. Without that mapping the only free alternative for
-  // XAGUSD was Twelve Data, which gates it behind a paid plan.
-  test("maps metals to Binance USD-M futures", () => {
-    assert.equal(resolveSymbol("XAGUSD").providers.binanceFutures, "XAGUSDT");
-    assert.equal(resolveSymbol("XPTUSD").providers.binanceFutures, "XPTUSDT");
-    assert.equal(resolveSymbol("XPDUSD").providers.binanceFutures, "XPDUSDT");
-    assert.equal(resolveSymbol("XAUUSD").providers.binanceFutures, "XAUUSDT");
+describe("symbol resolution against the broker", () => {
+  // The broker names indices differently from the short forms people type, and
+  // those short forms are what the watchlist stores.
+  const BROKER = [
+    "EURUSD", "XAUUSD", "XAGUSD", "BTCUSD", "ETHUSD",
+    "US 500", "US 30", "US TECH 100", "UK 100", "GERMANY 40",
+    "FRANCE 40", "ITALY 40", "AUSTRALIA 200", "JAPAN 225", "SPAIN 35",
+    "DB US DOLLAR INDEX", "S&P 500 LOW VOLATILITY",
+  ];
+
+  test("passes majors through untouched", () => {
+    for (const s of ["EURUSD", "XAUUSD", "XAGUSD", "BTCUSD"]) {
+      assert.equal(resolveAgainstBroker(s, BROKER), s);
+    }
   });
 
-  test("does not claim futures for symbols that have no contract", () => {
-    assert.equal(resolveSymbol("EURUSD").providers.binanceFutures, undefined);
-    assert.equal(resolveSymbol("BTCUSD").providers.binance, "BTCUSDT");
+  test("maps index aliases to the broker's wording", () => {
+    assert.equal(resolveAgainstBroker("US500", BROKER), "US 500");
+    assert.equal(resolveAgainstBroker("NAS100", BROKER), "US TECH 100");
+    assert.equal(resolveAgainstBroker("GER40", BROKER), "GERMANY 40");
+    assert.equal(resolveAgainstBroker("VIX", BROKER), "S&P 500 LOW VOLATILITY");
+    assert.equal(resolveAgainstBroker("DXY", BROKER), "DB US DOLLAR INDEX");
+  });
+
+  test("tolerates punctuation and spacing", () => {
+    assert.equal(resolveAgainstBroker("eur/usd", BROKER), "EURUSD");
+    assert.equal(resolveAgainstBroker(" us 500 ", BROKER), "US 500");
+  });
+
+  test("refuses symbols the account cannot trade", () => {
+    assert.equal(resolveAgainstBroker("SOLUSD", BROKER), null);
+    assert.equal(resolveAgainstBroker("US2000", BROKER), null);
+    assert.equal(resolveAgainstBroker("", BROKER), null);
+  });
+
+  test("classifies asset types from the broker name", () => {
+    assert.equal(toSymbolMeta("EURUSD").type, "forex");
+    assert.equal(toSymbolMeta("XAUUSD").type, "commodity");
+    assert.equal(toSymbolMeta("BTCUSD").type, "crypto");
+    assert.equal(toSymbolMeta("US 500").type, "index");
+  });
+
+  test("catalog exposes both broker names and the short aliases", () => {
+    const catalog = buildCatalog(BROKER);
+    const bySymbol = new Map(catalog.map((c) => [c.symbol, c]));
+    assert.equal(bySymbol.get("US500")?.name, "US 500");
+    assert.equal(bySymbol.get("GER40")?.name, "GERMANY 40");
+    assert.equal(bySymbol.get("AUS200")?.name, "AUSTRALIA 200");
+    assert.ok(searchCatalog(catalog, "ger").some((c) => c.symbol === "GER40"));
+  });
+
+  test("omits aliases the account cannot trade", () => {
+    // Same aliases, but this account lists no Japan or Spain index, so the
+    // convenience names for them must not be advertised.
+    const partial = BROKER.filter((n) => n !== "JAPAN 225" && n !== "SPAIN 35");
+    const bySymbol = new Set(buildCatalog(partial).map((c) => c.symbol));
+    assert.equal(bySymbol.has("JP225"), false);
+    assert.equal(bySymbol.has("ESP35"), false);
+    assert.equal(bySymbol.has("GER40"), true);
+  });
+});
+
+describe("timeframes", () => {
+  // Every timeframe must carry a cTrader period, or a card silently fails.
+  test("all ten map to a trendbar period and a history limit", () => {
+    const { TIMEFRAMES } = require("../src/server/market/timeframes");
+    assert.equal(TIMEFRAMES.length, 10);
+    for (const tf of TIMEFRAMES) {
+      assert.ok(Number.isInteger(tf.ctrader) && tf.ctrader > 0, `${tf.id} has no cTrader period`);
+      assert.ok(tf.ctraderMaxRange > 0, `${tf.id} has no cTrader history limit`);
+      // Five weeks covers M1-M5; longer periods get more.
+      assert.ok(tf.ctraderMaxRange >= 302_400_000, `${tf.id} range too small`);
+    }
+  });
+
+  test("unknown ids fall back to the default rather than throwing", () => {
+    const { getTimeframe, DEFAULT_TIMEFRAME } = require("../src/server/market/timeframes");
+    assert.equal(getTimeframe("nonsense").id, DEFAULT_TIMEFRAME);
   });
 });
 
@@ -172,44 +218,44 @@ describe("provider circuit breaker", () => {
   test("stays closed until the failure threshold is reached", () => {
     breaker.reset();
     const now = 1_000_000;
-    breaker.recordFailure("stooq", "", now);
-    assert.equal(breaker.isAvailable("stooq", now), true);
-    assert.equal(breaker.cooldownRemaining("stooq", now), 0);
+    breaker.recordFailure("ctrader", "", now);
+    assert.equal(breaker.isAvailable("ctrader", now), true);
+    assert.equal(breaker.cooldownRemaining("ctrader", now), 0);
   });
 
   test("opens after the threshold and blocks calls", () => {
     breaker.reset();
     const now = 1_000_000;
-    breaker.recordFailure("stooq", "", now);
-    breaker.recordFailure("stooq", "", now);
-    assert.equal(breaker.isAvailable("stooq", now), false);
-    assert.equal(breaker.cooldownRemaining("stooq", now), FIVE_MIN);
+    breaker.recordFailure("ctrader", "", now);
+    breaker.recordFailure("ctrader", "", now);
+    assert.equal(breaker.isAvailable("ctrader", now), false);
+    assert.equal(breaker.cooldownRemaining("ctrader", now), FIVE_MIN);
   });
 
   test("more failures in the same outage do not lengthen the cooldown", () => {
     breaker.reset();
     const now = 1_000_000;
-    for (let i = 0; i < 20; i++) breaker.recordFailure("yahoo", "", now);
+    for (let i = 0; i < 20; i++) breaker.recordFailure("ctrader", "", now);
     // One sweep analyses many symbols; all those failures are one incident.
-    assert.equal(breaker.cooldownRemaining("yahoo", now), FIVE_MIN);
+    assert.equal(breaker.cooldownRemaining("ctrader", now), FIVE_MIN);
   });
 
   test("cooldown doubles per later trip and is capped", () => {
     breaker.reset();
     let now = 1_000_000;
     const trip = (at: number) => {
-      breaker.recordFailure("stooq", "", at);
-      breaker.recordFailure("stooq", "", at);
+      breaker.recordFailure("ctrader", "", at);
+      breaker.recordFailure("ctrader", "", at);
     };
     trip(now);
-    assert.equal(breaker.cooldownRemaining("stooq", now), FIVE_MIN);
+    assert.equal(breaker.cooldownRemaining("ctrader", now), FIVE_MIN);
     // Cooldown expires, the probe fails again, so the next trip is longer.
     now += FIVE_MIN;
     trip(now);
-    assert.equal(breaker.cooldownRemaining("stooq", now), FIVE_MIN * 2);
+    assert.equal(breaker.cooldownRemaining("ctrader", now), FIVE_MIN * 2);
     now += FIVE_MIN * 2;
     trip(now);
-    assert.equal(breaker.cooldownRemaining("stooq", now), FIVE_MIN * 4);
+    assert.equal(breaker.cooldownRemaining("ctrader", now), FIVE_MIN * 4);
   });
 
   test("a rate limit gets a short cooldown, not the long dead-provider one", () => {
@@ -217,43 +263,80 @@ describe("provider circuit breaker", () => {
     const now = 1_000_000;
     // Twelve Data answers 429 "out of API credits for the current minute"; its
     // quota refills every 60s, so parking it for 5+ minutes wastes availability.
-    breaker.recordFailure("twelvedata", "HTTP 429: You have run out of API credits for the current minute.", now);
-    const cooling = breaker.cooldownRemaining("twelvedata", now);
+    breaker.recordFailure("ctrader", "HTTP 429: You have run out of API credits for the current minute.", now);
+    const cooling = breaker.cooldownRemaining("ctrader", now);
     assert.ok(cooling > 0 && cooling < FIVE_MIN, `expected a short cooldown, got ${cooling}`);
-    assert.equal(breaker.snapshot().twelvedata.trips, 0, "rate limits must not escalate");
+    assert.equal(breaker.snapshot().ctrader.trips, 0, "rate limits must not escalate");
     // And it comes straight back once the quota window rolls over.
-    assert.equal(breaker.isAvailable("twelvedata", now + cooling), true);
+    assert.equal(breaker.isAvailable("ctrader", now + cooling), true);
   });
 
   test("a success closes it and resets the escalation", () => {
     breaker.reset();
     const now = 1_000_000;
-    breaker.recordFailure("yahoo", "", now);
-    breaker.recordFailure("yahoo", "", now);
-    assert.equal(breaker.isAvailable("yahoo", now), false);
-    breaker.recordSuccess("yahoo");
-    assert.equal(breaker.isAvailable("yahoo", now), true);
-    assert.equal(breaker.snapshot().yahoo.trips, 0);
+    breaker.recordFailure("ctrader", "", now);
+    breaker.recordFailure("ctrader", "", now);
+    assert.equal(breaker.isAvailable("ctrader", now), false);
+    breaker.recordSuccess("ctrader");
+    assert.equal(breaker.isAvailable("ctrader", now), true);
+    assert.equal(breaker.snapshot().ctrader.trips, 0);
   });
 
   test("a provider that keeps working is never blocked", () => {
     breaker.reset();
     const now = 1_000_000;
     for (let i = 0; i < 50; i++) {
-      breaker.recordSuccess("binance");
-      assert.equal(breaker.isAvailable("binance", now), true);
+      breaker.recordSuccess("ctrader");
+      assert.equal(breaker.isAvailable("ctrader", now), true);
     }
   });
 });
 
-describe("providers", () => {
-  test("simulated provider produces a valid, analysable series", async () => {
-    const tf = { id: "1d", ms: 86400000, limit: 320 } as Timeframe;
-    const meta = resolveSymbol("XAUUSD");
-    const candles = await simulatedCandles(meta, tf);
-    assert.equal(candles.length, 320);
-    const result = analyze(candles, meta, "1d");
-    assert.ok(result.price > 0);
-    assert.ok(RATINGS.includes(result.summary.rating));
+describe("card ordering", () => {
+  const items = (syms: string[]) => syms.map((symbol) => ({ symbol }));
+
+  test("applyOrder is a no-op when nothing is saved", () => {
+    const list = items(["A", "B", "C"]);
+    assert.deepEqual(applyOrder(list, []).map((i) => i.symbol), ["A", "B", "C"]);
+  });
+
+  test("applyOrder follows the saved layout", () => {
+    const list = items(["A", "B", "C"]);
+    assert.deepEqual(applyOrder(list, ["C", "A", "B"]).map((i) => i.symbol), ["C", "A", "B"]);
+  });
+
+  test("applyOrder keeps symbols missing from the saved layout", () => {
+    // A symbol added after the layout was saved must not vanish.
+    const list = items(["A", "B", "NEW"]);
+    assert.deepEqual(applyOrder(list, ["B", "A"]).map((i) => i.symbol), ["B", "A", "NEW"]);
+  });
+
+  test("moveTo puts the card at the requested FINAL index", () => {
+    const list = items(["A", "B", "C", "D"]);
+    assert.deepEqual(moveTo(list, "A", 3).map((i) => i.symbol), ["B", "C", "D", "A"]);
+    assert.deepEqual(moveTo(list, "D", 0).map((i) => i.symbol), ["D", "A", "B", "C"]);
+    // Moving forward one step must actually move.
+    assert.deepEqual(moveTo(list, "B", 2).map((i) => i.symbol), ["A", "C", "B", "D"]);
+    assert.deepEqual(moveTo(list, "C", 1).map((i) => i.symbol), ["A", "C", "B", "D"]);
+  });
+
+  test("moveTo ignores unknown symbols and clamps out-of-range targets", () => {
+    const list = items(["A", "B"]);
+    assert.deepEqual(moveTo(list, "ZZ", 0).map((i) => i.symbol), ["A", "B"]);
+    assert.deepEqual(moveTo(list, "A", 99).map((i) => i.symbol), ["B", "A"]);
+    assert.deepEqual(moveTo(list, "B", -5).map((i) => i.symbol), ["B", "A"]);
+  });
+
+  test("dropIndex accounts for the dragged card vacating its slot", () => {
+    // Dragging the first card onto the last: target stays at 3, dragged goes after.
+    assert.equal(dropIndex(0, 3, "after"), 3);
+    assert.equal(dropIndex(0, 3, "before"), 2);
+    // Dragging a later card onto an earlier one: the target shifts left, so the
+    // dragged card lands one past it.
+    assert.equal(dropIndex(3, 0, "before"), 0);
+    assert.equal(dropIndex(3, 0, "after"), 1);
+    // Same side, no shift.
+    assert.equal(dropIndex(1, 3, "before"), 2);
+    assert.equal(dropIndex(1, 3, "after"), 3);
   });
 });

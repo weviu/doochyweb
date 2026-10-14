@@ -149,7 +149,13 @@ export const marketApi = {
       `/api/market/search?q=${encodeURIComponent(q)}`
     ),
 
-  watchlist: () => request<{ symbols: string[] }>("/api/market/watchlist"),
+  watchlist: () => request<{ symbols: string[]; order: string[] }>("/api/market/watchlist"),
+
+  saveOrder: (order: string[]) =>
+    request<{ order: string[] }>("/api/market/watchlist/order", {
+      method: "POST",
+      body: { order },
+    }),
 
   addSymbol: (symbol: string) =>
     request<{ symbols: string[] }>("/api/market/watchlist", { method: "POST", body: { symbol } }),

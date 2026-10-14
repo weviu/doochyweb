@@ -33,7 +33,6 @@ export interface TimeframeRating {
   neutral?: number;
   price?: number;
   provider?: string;
-  simulated?: boolean;
   error?: string;
 }
 
@@ -59,8 +58,6 @@ export interface MarketAnalysis {
   series: { t: number; c: number }[];
   updatedAt: number;
   provider: string;
-  simulated: boolean;
-  proxy?: string;
   cached: boolean;
   warnings: ProviderWarning[];
   meta: { note?: string };
@@ -84,13 +81,22 @@ export interface CatalogEntry {
   type: SymbolType;
 }
 
+export interface MarketAccount {
+  ctid: number;
+  login: number;
+  broker: string;
+  isLive: boolean;
+  symbolCount: number;
+}
+
 export interface MarketSettings {
   refreshSeconds: number;
   defaultTimeframe: string;
   strongRatio: number;
-  /** Off by default: no invented prices. */
-  allowSimulated: boolean;
-  twelvedataKeySet: boolean;
+  /** Which cTrader account supplies prices. Display only, never credentials. */
+  account: MarketAccount | null;
+  /** Set when no usable account is connected, so the page can explain itself. */
+  accountError: string | null;
 }
 
 export interface MarketConfig {

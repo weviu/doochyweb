@@ -18,12 +18,8 @@ export type SymbolType = "forex" | "commodity" | "crypto" | "index" | "stock" | 
 /** Provider-specific ticker mappings. Each is best-effort; the orchestrator
  *  walks providers in priority order and uses the first that returns candles. */
 export interface ProviderMap {
-  binance?: string | null;
-  /** USD-M futures ticker, for metals that spot does not list. */
-  binanceFutures?: string | null;
-  twelvedata?: string | null;
-  yahoo?: string | null;
-  stooq?: string | null;
+  /** Broker symbol name. Set by the symbol resolver, not by the catalog. */
+  ctrader?: string | null;
 }
 
 /** Canonical description of a tradable market. */
@@ -36,23 +32,16 @@ export interface SymbolMeta {
   proxy?: string;
 }
 
-/** A chart timeframe plus each provider's own interval spelling. */
+/** A chart timeframe, in cTrader's own vocabulary. */
 export interface Timeframe {
   id: string;
   label: string;
   ms: number;
   ttl: number;
-  binance: string | null;
-  twelvedata: string | null;
-  yahoo: string | null;
-  yahooRange: string;
-  /**
-   * For timeframes Yahoo has no native interval for. Fetch this interval at
-   * this range and aggregate `factor` bars into one (4h = 1h x4, 3m = 1m x3).
-   */
-  yahooFallback?: { interval: string; range: string; factor: number };
-  /** Maximum bars to request. Injected by the orchestrator, not by TIMEFRAMES. */
-  limit?: number;
+  /** ProtoOATrendbarPeriod enum value for this bar size. */
+  ctrader: number | null;
+  /** Largest (toTimestamp - fromTimestamp) cTrader accepts for this period. */
+  ctraderMaxRange: number;
 }
 
 /** The five-level verdict, ordered from most bearish to most bullish. */
@@ -104,8 +93,6 @@ export interface Analysis {
 export interface AnalysisResponse extends Analysis {
   ok: true;
   provider: ProviderId;
-  simulated: boolean;
-  proxy?: string;
   cached: boolean;
   warnings: ProviderWarning[];
   meta: { note?: string };
@@ -131,11 +118,10 @@ export interface TimeframeRating {
   neutral?: number;
   price?: number;
   provider?: ProviderId;
-  simulated?: boolean;
   error?: string;
 }
 
-export type ProviderId = "binance" | "binanceFutures" | "twelvedata" | "yahoo" | "stooq" | "simulated";
+export type ProviderId = "ctrader";
 
 export interface ProviderWarning {
   provider: ProviderId;
@@ -150,8 +136,6 @@ export interface FetchContext {
 export interface CandleResult {
   candles: Candle[];
   provider: ProviderId;
-  simulated: boolean;
-  proxy?: string;
 }
 
 /** Provider contract. `supports` is a pre-filter; `fetchCandles` throws to hand
@@ -162,17 +146,23 @@ export interface MarketProvider {
   fetchCandles(meta: SymbolMeta, tf: Timeframe, ctx: FetchContext): Promise<Candle[]>;
 }
 
-/** Settings the UI may read and write. The Twelve Data key is deliberately
- *  absent: it comes from the TWELVEDATA_API_KEY environment variable only and is
- *  never persisted or returned over the API. */
+/** The cTrader account whose symbols and prices back the Analysis page. */
+export interface MarketAccount {
+  userId: string;
+  ctid: number;
+  isLive: boolean;
+}
+
+/** Settings the UI may read and write. cTrader credentials live in the
+ *  credentials collection, never here, and are never returned over the API. */
 export interface AnalysisSettings {
   refreshSeconds: number;
   defaultTimeframe: string;
   strongRatio: number;
-  /** Whether markets with no working source may fall back to generated data. */
-  allowSimulated: boolean;
-  /** Whether a Twelve Data key is configured on the server. */
-  twelvedataKeySet: boolean;
+  /** Which cTrader account is supplying the prices, for display only. */
+  account: { ctid: number; login: number; broker: string; isLive: boolean; symbolCount: number } | null;
+  /** Set when cTrader is unreachable, so the UI can explain an empty page. */
+  accountError: string | null;
 }
 
 /** A catalog entry for the add-symbol autocomplete. */

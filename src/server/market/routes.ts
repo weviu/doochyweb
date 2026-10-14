@@ -1,37 +1,76 @@
-// Express router for the Analysis page: watchlist, catalog and technical
-// analysis. Ported from the standalone `gauge` project's `server.js`, which
-// hand-rolled the same routes over `node:http`.
+// Express router for the Analysis page: watchlist, broker symbol catalog and
+// technical analysis. Bars come from cTrader (ProtoOAGetTrendbarsReq) via
+// src/server/market/providers/ctrader.
 //
-// Mounted at /api/market by index.ts. The Analysis page is public, so the read
-// routes (config, catalog, search, watchlist, analysis) are deliberately open.
-// Anything that mutates shared state, or forces an upstream fetch, sits behind
-// authRequired: the watchlist and settings are ONE global document, so leaving
-// writes open would let any visitor rewrite them, and the per-symbol refresh
-// bypasses the cache and therefore spends provider quota.
+// Mounted at /api/market by index.ts. The page is public, so the read routes are
+// deliberately open. Anything that mutates shared state, or forces a fresh
+// broker request, sits behind authRequired: the watchlist and settings are ONE
+// global document, and a forced refresh spends the shared account's rate limit.
 
 import { Router } from "express";
 
 import { analyze, setStrongRatio } from "./analysis";
 import { authRequired } from "../auth";
-import { clearCache, getCandles, mapPool, MAX_SWEEP, SWEEP_CONCURRENCY } from "./providers/index";
-import { catalogList, resolveSymbol, searchCatalog } from "./symbols";
+import { resolveMarketAccount } from "./account";
+import { clearCache, cTraderCatalog, getCandles } from "./providers/index";
+import { buildCatalog, resolveAgainstBroker, searchCatalog, toSymbolMeta } from "./symbols";
 import {
   addToWatchlist,
   getSettings,
   getWatchlist,
   publicSettings,
   removeFromWatchlist,
+  saveCardOrder,
   updateSettings,
 } from "./store";
 import { DEFAULT_TIMEFRAME, timeframeLabels, TIMEFRAMES } from "./timeframes";
 import type {
   AnalysisError,
+  AnalysisSettings,
   AnalysisResponse,
+  CatalogEntry,
+  ProviderWarning,
   SymbolMeta,
   TimeframeRating,
 } from "./types";
 
 export const marketRouter = Router();
+
+// Bars are paced by the provider, but a wide watchlist still costs one request
+// per symbol. Six at a time keeps a cold sweep responsive without tripping
+// cTrader's per-payload-type throttle.
+const SWEEP_CONCURRENCY = 6;
+
+// The detail view asks for every timeframe at once; fewer in parallel because
+// each is a separate payload type.
+const MAX_SWEEP = 4;
+
+/** Broker symbols for the configured account, or [] with no account attached. */
+async function brokerCatalog(): Promise<CatalogEntry[]> {
+  try {
+    return buildCatalog(await cTraderCatalog());
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------- config
+
+let catalogCache: { at: number; items: CatalogEntry[] } | null = null;
+const CATALOG_TTL_MS = 60_000;
+
+async function cachedCatalog(): Promise<CatalogEntry[]> {
+  if (catalogCache && Date.now() - catalogCache.at < CATALOG_TTL_MS) return catalogCache.items;
+  const items = await brokerCatalog();
+  catalogCache = { at: Date.now(), items };
+  return items;
+}
+
+/** Force the catalog to be re-read, e.g. after credentials change. */
+export function clearCatalogCache(): void {
+  catalogCache = null;
+  clearCache();
+}
 
 marketRouter.get("/config", async (_req, res) => {
   const settings = await publicSettings();
@@ -39,20 +78,39 @@ marketRouter.get("/config", async (_req, res) => {
     timeframes: timeframeLabels(),
     defaultTimeframe: DEFAULT_TIMEFRAME,
     settings,
-    catalog: catalogList(),
+    catalog: await cachedCatalog(),
+    source: "ctrader",
   });
 });
 
-marketRouter.get("/catalog", (_req, res) => {
-  res.json({ items: catalogList() });
+marketRouter.get("/catalog", async (_req, res) => {
+  res.json({ items: await cachedCatalog() });
 });
 
-marketRouter.get("/search", (req, res) => {
-  res.json({ items: searchCatalog(req.query.q ?? "") });
+marketRouter.get("/search", async (req, res) => {
+  res.json({ items: searchCatalog(await cachedCatalog(), req.query.q ?? "") });
 });
+
+marketRouter.get("/account", async (_req, res) => {
+  const settings = await publicSettings();
+  res.json({ account: settings.account, error: settings.accountError });
+});
+
+// ---------------------------------------------------------------- watchlist
 
 marketRouter.get("/watchlist", async (_req, res) => {
-  res.json({ symbols: await getWatchlist() });
+  const { watchlist, cardOrder } = await getSettings();
+  res.json({ symbols: watchlist, order: cardOrder });
+});
+
+// Saved drag-and-drop layout. Auth required: the layout is shared state.
+marketRouter.post("/watchlist/order", authRequired, async (req, res) => {
+  const order = req.body?.order;
+  if (!Array.isArray(order)) {
+    res.status(400).json({ error: "order must be an array of symbols" });
+    return;
+  }
+  res.json({ order: await saveCardOrder(order) });
 });
 
 marketRouter.post("/watchlist", authRequired, async (req, res) => {
@@ -61,14 +119,17 @@ marketRouter.post("/watchlist", authRequired, async (req, res) => {
     res.status(400).json({ error: "symbol is required" });
     return;
   }
-  let meta: SymbolMeta;
-  try {
-    meta = resolveSymbol(symbol);
-  } catch (err) {
-    res.status(400).json({ error: message(err) });
+  const catalog = await cachedCatalog();
+  const brokerName = resolveAgainstBroker(symbol, catalog.map((c) => c.name));
+  if (!brokerName) {
+    res.status(400).json({
+      error: `"${symbol}" is not tradable on the connected cTrader account`,
+    });
     return;
   }
-  res.json({ symbols: await addToWatchlist(meta.symbol) });
+  // Store the short form the user typed, so the watchlist stays readable.
+  const canonical = catalog.find((c) => c.name === brokerName)?.symbol ?? String(symbol).toUpperCase();
+  res.json({ symbols: await addToWatchlist(canonical) });
 });
 
 marketRouter.delete("/watchlist", authRequired, async (req, res) => {
@@ -80,6 +141,8 @@ marketRouter.delete("/watchlist", authRequired, async (req, res) => {
   res.json({ symbols: await removeFromWatchlist(String(symbol)) });
 });
 
+// ---------------------------------------------------------------- settings
+
 marketRouter.get("/settings", async (_req, res) => {
   res.json(await publicSettings());
 });
@@ -90,13 +153,14 @@ marketRouter.post("/settings", authRequired, async (req, res) => {
   if (body.refreshSeconds !== undefined) patch.refreshSeconds = Number(body.refreshSeconds);
   if (body.defaultTimeframe !== undefined) patch.defaultTimeframe = String(body.defaultTimeframe);
   if (body.strongRatio !== undefined) patch.strongRatio = Number(body.strongRatio);
-  if (body.allowSimulated !== undefined) patch.allowSimulated = Boolean(body.allowSimulated);
   await updateSettings(patch);
-  // A settings change can invalidate every cached series (new source, new
-  // sensitivity), so drop them the way the standalone server did.
+  // A settings change can invalidate cached bars (new timeframe, new
+  // sensitivity), so drop them.
   clearCache();
   res.json(await publicSettings());
 });
+
+// ---------------------------------------------------------------- analysis
 
 marketRouter.get("/analysis", async (req, res) => {
   const timeframe = req.query.timeframe ? String(req.query.timeframe) : DEFAULT_TIMEFRAME;
@@ -107,29 +171,33 @@ marketRouter.get("/analysis", async (req, res) => {
   // prime it from the stored settings before every sweep.
   const { strongRatio } = await getSettings();
   setStrongRatio(strongRatio);
+  const catalog = await cachedCatalog();
+  // Resolved once per sweep: it hits Mongo, and per-symbol it was pure overhead.
+  const settings = await publicSettings();
   const results = await mapPool(symbols, SWEEP_CONCURRENCY, (symbol) =>
-    analyzeSymbol(symbol, timeframe)
+    analyzeSymbol(symbol, timeframe, catalog, settings)
   );
   res.json({ timeframe, results, updatedAt: Date.now() });
 });
 
-// Force-refresh a single symbol, bypassing the per-timeframe candle cache. Used
-// by the per-card refresh control, so one market can be re-pulled without
-// waiting out the TTL or re-fetching the whole watchlist.
+// Force-refresh a single symbol, bypassing the bar cache. Gated: it spends the
+// shared account's cTrader rate limit.
 marketRouter.post("/analysis/:symbol/refresh", authRequired, async (req, res) => {
-  const symbol = req.params.symbol;
   const timeframe = req.query.timeframe ? String(req.query.timeframe) : DEFAULT_TIMEFRAME;
   const { strongRatio } = await getSettings();
   setStrongRatio(strongRatio);
-  res.json(await analyzeSymbol(symbol, timeframe, true));
+  const settings = await publicSettings();
+  res.json(await analyzeSymbol(req.params.symbol, timeframe, await cachedCatalog(), settings, true));
 });
 
 marketRouter.get("/analysis/:symbol", async (req, res) => {
   const symbol = req.params.symbol;
   const timeframe = req.query.timeframe ? String(req.query.timeframe) : DEFAULT_TIMEFRAME;
-  const result = await analyzeSymbol(symbol, timeframe);
+  const catalog = await cachedCatalog();
+  const settings = await publicSettings();
+  const result = await analyzeSymbol(symbol, timeframe, catalog, settings);
   if ((req.query.all === "1" || req.query.all === "true") && result.ok) {
-    result.timeframeRatings = await ratingsForAllTimeframes(symbol);
+    result.timeframeRatings = await ratingsForAllTimeframes(symbol, catalog, settings);
   }
   res.json(result);
 });
@@ -137,29 +205,26 @@ marketRouter.get("/analysis/:symbol", async (req, res) => {
 async function analyzeSymbol(
   symbol: string,
   timeframe: string,
+  catalog: CatalogEntry[],
+  settings: AnalysisSettings,
   force = false
 ): Promise<AnalysisResponse | AnalysisError> {
-  let meta: SymbolMeta;
-  try {
-    meta = resolveSymbol(symbol);
-  } catch (err) {
-    return { ok: false, symbol, error: message(err) };
+  const brokerName = resolveAgainstBroker(symbol, catalog.map((c) => c.name));
+  if (!brokerName) {
+    return {
+      ok: false,
+      symbol,
+      error: `"${symbol}" is not tradable on the connected cTrader account`,
+    };
   }
+  const meta: SymbolMeta = toSymbolMeta(brokerName, symbol);
   try {
-    const settings = await publicSettings();
-    const { candles, provider, simulated, proxy, warnings, cached } = await getCandles(
-      meta,
-      timeframe,
-      settings,
-      { force }
-    );
-    const result = analyze(candles, meta, timeframe);
+    const { bars, provider, warnings, cached } = await getCandles(meta, timeframe, settings, { force });
+    const result = analyze(bars, meta, timeframe);
     return {
       ok: true,
       ...result,
       provider,
-      simulated,
-      proxy,
       cached,
       warnings,
       meta: { note: meta.note },
@@ -176,20 +241,20 @@ async function analyzeSymbol(
   }
 }
 
-// Compact rating (verdict + vote counts) for every timeframe, so the detail
-// view can show a "Strong Buy / Buy / Sell …" label under each timeframe tab.
-async function ratingsForAllTimeframes(symbol: string): Promise<Record<string, TimeframeRating>> {
-  let meta: SymbolMeta;
-  try {
-    meta = resolveSymbol(symbol);
-  } catch {
-    return {};
-  }
-  const settings = await publicSettings();
+// Compact verdict per timeframe, so the detail view can show every timeframe at
+// once without a second round of user input.
+async function ratingsForAllTimeframes(
+  symbol: string,
+  catalog: CatalogEntry[],
+  settings: AnalysisSettings
+): Promise<Record<string, TimeframeRating>> {
+  const brokerName = resolveAgainstBroker(symbol, catalog.map((c) => c.name));
+  if (!brokerName) return {};
+  const meta = toSymbolMeta(brokerName, symbol);
   const entries = await mapPool(TIMEFRAMES, MAX_SWEEP, async (tf) => {
     try {
-      const { candles, provider, simulated } = await getCandles(meta, tf.id, settings);
-      const a = analyze(candles, meta, tf.id);
+      const { bars, provider } = await getCandles(meta, tf.id, settings);
+      const a = analyze(bars, meta, tf.id);
       const rating: TimeframeRating = {
         rating: a.summary.rating,
         score: a.summary.score,
@@ -198,7 +263,6 @@ async function ratingsForAllTimeframes(symbol: string): Promise<Record<string, T
         neutral: a.summary.neutral,
         price: a.price,
         provider,
-        simulated,
       };
       return [tf.id, rating] as const;
     } catch (err) {
@@ -208,6 +272,28 @@ async function ratingsForAllTimeframes(symbol: string): Promise<Record<string, T
   return Object.fromEntries(entries);
 }
 
+/** Run `fn` over `items` with bounded concurrency, preserving input order. */
+async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.max(1, Math.min(concurrency, items.length)) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      results[index] = await fn(items[index], index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
+
+// Re-exported so tests can exercise resolution without a live account.
+export { resolveMarketAccount, resolveAgainstBroker, buildCatalog, toSymbolMeta };
+export type { ProviderWarning };

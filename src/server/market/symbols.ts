@@ -1,282 +1,162 @@
-// Instrument catalog + symbol resolution.
+// Market symbol resolution against the broker's own symbol list.
 //
-// A "meta" object is the canonical description of a market:
-//   { symbol, name, type, providers: { binance?, twelvedata?, yahoo?, stooq? },
-//     note?, proxy? }
+// There is no hand-maintained catalog any more: what can be analysed is exactly
+// what the configured cTrader account can trade. This module maps the familiar
+// short name people type (and that the watchlist already holds) onto the broker's
+// exact symbol string, because the two rarely match for anything other than
+// majors:
 //
-// Providers are best-effort: the orchestrator walks them in priority order and
-// uses the first that returns candles. Ported from the standalone `gauge`
-// project; only types were added.
+//   EURUSD, XAUUSD, XAGUSD, XPTUSD, XPDUSD, BTCUSD, ETHUSD   exact
+//   US500  -> "US 500"        NAS100 -> "US TECH 100"
+//   GER40  -> "GERMANY 40"    ITA40  -> "ITALY 40"
+//
+// Resolution order: alias table, then an exact match, then a
+// punctuation-insensitive match. Anything else is reported as untradable rather
+// than guessed at.
 
 import type { CatalogEntry, SymbolMeta, SymbolType } from "./types";
 
-export const FIAT = new Set([
-  "USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "NZD", "CNH", "CNY", "SEK",
-  "NOK", "DKK", "PLN", "HUF", "CZK", "TRY", "ZAR", "MXN", "SGD", "HKD", "INR",
-  "RUB", "BRL", "THB", "KRW", "ILS", "RON",
-]);
-
-export const METALS = new Set(["XAU", "XAG", "XPT", "XPD"]);
-
-// Metals that Yahoo can serve (as futures), used when there is no key.
-const YAHOO_METAL: Record<string, string | null> = {
-  XAU: "GC=F",
-  XAG: "SI=F",
-  XPT: "PL=F",
-  XPD: "PA=F",
+// Familiar name -> broker symbol name. Keys are the short forms used by the
+// watchlist and the add-market box.
+const ALIASES: Record<string, string> = {
+  // Indices (investing.com style -> broker wording)
+  US500: "US 500",
+  US30: "US 30",
+  NAS100: "US TECH 100",
+  UK100: "UK 100",
+  GER40: "GERMANY 40",
+  FRA40: "FRANCE 40",
+  ITA40: "ITALY 40",
+  AUS200: "AUSTRALIA 200",
+  JP225: "JAPAN 225",
+  ESP35: "SPAIN 35",
+  DXY: "DB US DOLLAR INDEX",
+  VIX: "S&P 500 LOW VOLATILITY",
+  // Alternate index spellings people tend to type.
+  SPX: "US 500",
+  NDX: "US TECH 100",
+  DE40: "GERMANY 40",
+  CAC40: "FRANCE 40",
+  FTMIB: "ITALY 40",
+  ASX: "AUSTRALIA 200",
+  N225: "JAPAN 225",
+  IBEX: "SPAIN 35",
+  // Crypto the broker lists as USDT pairs.
+  BTCUSDT: "BTCUSD",
+  ETHUSDT: "ETHUSD",
 };
 
-// Metals on Binance USD-M futures. Spot has gold only, but fapi also lists
-// silver, platinum and palladium, and every free alternative is either
-// rate-limited (Yahoo from this host) or a paid data plan (Twelve Data's
-// XAG/USD is Grow/Venture tier). So the futures perimeter is the one source
-// that prices these without a key.
-const BINANCE_FUTURES: Record<string, string> = {
-  XAU: "XAUUSDT",
-  XAG: "XAGUSDT",
-  XPT: "XPTUSDT",
-  XPD: "XPDUSDT",
-};
-
-// Base asset -> Binance spot symbol. Only real, liquid pairs.
-const BINANCE: Record<string, string> = {
-  BTC: "BTCUSDT", ETH: "ETHUSDT", BNB: "BNBUSDT", SOL: "SOLUSDT",
-  XRP: "XRPUSDT", ADA: "ADAUSDT", AVAX: "AVAXUSDT",
-  DOT: "DOTUSDT", LINK: "LINKUSDT", LTC: "LTCUSDT", BCH: "BCHUSDT",
-  XLM: "XLMUSDT", TRX: "TRXUSDT", TON: "TONUSDT", SHIB: "SHIBUSDT",
-  ATOM: "ATOMUSDT", UNI: "UNIUSDT", NEAR: "NEARUSDT", APT: "APTUSDT",
-  ARB: "ARBUSDT", OP: "OPUSDT", FIL: "FILUSDT", POL: "POLUSDT",
-  SUI: "SUIUSDT", INJ: "INJUSDT", SEI: "SEIUSDT", TIA: "TIAUSDT",
-  PEPE: "PEPEUSDT", WIF: "WIFUSDT", ORDI: "ORDIUSDT", STX: "STXUSDT",
-  IMX: "IMXUSDT", RNDR: "RENDERUSDT", FET: "FETUSDT", ETC: "ETCUSDT",
-  EOS: "EOSUSDT", ALGO: "ALGOUSDT", VET: "VETUSDT", ICP: "ICPUSDT",
-};
-
-export const CRYPTO_BASES = new Set(Object.keys(BINANCE));
-
-interface IndexEntry {
-  symbol: string;
-  name: string;
-  twelvedata: string;
-  yahoo: string;
-  stooq: string | null;
-}
-
-// investing.com-style index contracts.
-const INDICES: IndexEntry[] = [
-  { symbol: "US500", name: "S&P 500", twelvedata: "SPX", yahoo: "^GSPC", stooq: "^spx" },
-  { symbol: "US30", name: "Dow Jones 30", twelvedata: "DJI", yahoo: "^DJI", stooq: "^dji" },
-  { symbol: "NAS100", name: "Nasdaq 100", twelvedata: "NDX", yahoo: "^NDX", stooq: "^ndq" },
-  { symbol: "US2000", name: "Russell 2000", twelvedata: "RUT", yahoo: "^RUT", stooq: "^rut" },
-  { symbol: "UK100", name: "FTSE 100", twelvedata: "FTSE", yahoo: "^FTSE", stooq: "^ukx" },
-  { symbol: "GER40", name: "DAX 40", twelvedata: "DAX", yahoo: "^GDAXI", stooq: "^dax" },
-  { symbol: "FRA40", name: "CAC 40", twelvedata: "CAC", yahoo: "^FCHI", stooq: "^cac" },
-  { symbol: "EU50", name: "Euro Stoxx 50", twelvedata: "STOXX50E", yahoo: "^STOXX50E", stooq: "^stx50" },
-  { symbol: "JP225", name: "Nikkei 225", twelvedata: "N225", yahoo: "^N225", stooq: "^nkx" },
-  { symbol: "HK50", name: "Hang Seng", twelvedata: "HSI", yahoo: "^HSI", stooq: "^hsi" },
-  { symbol: "AUS200", name: "ASX 200", twelvedata: "ASX", yahoo: "^AXJO", stooq: "^ax" },
-  { symbol: "ESP35", name: "IBEX 35", twelvedata: "IBEX", yahoo: "^IBEX", stooq: "^ibex" },
-  { symbol: "ITA40", name: "FTSE MIB", twelvedata: "FTSEMIB", yahoo: "FTSEMIB.MI", stooq: "^mib" },
-  { symbol: "DXY", name: "US Dollar Index", twelvedata: "DXY", yahoo: "DX-Y.NYB", stooq: null },
-  { symbol: "VIX", name: "CBOE Volatility Index", twelvedata: "VIX", yahoo: "^VIX", stooq: "^vix" },
-];
-
-// Extra display names for common forex pairs.
-const FOREX_NAMES: Record<string, string> = {
-  EURUSD: "Euro / US Dollar", GBPUSD: "British Pound / US Dollar",
-  USDJPY: "US Dollar / Japanese Yen", USDCHF: "US Dollar / Swiss Franc",
-  USDCAD: "US Dollar / Canadian Dollar", AUDUSD: "Australian Dollar / US Dollar",
-  NZDUSD: "New Zealand Dollar / US Dollar", EURGBP: "Euro / British Pound",
-  EURJPY: "Euro / Japanese Yen", GBPJPY: "British Pound / Japanese Yen",
-  EURCHF: "Euro / Swiss Franc", EURAUD: "Euro / Australian Dollar",
-  EURCAD: "Euro / Canadian Dollar", AUDJPY: "Australian Dollar / Japanese Yen",
-  AUDNZD: "Australian Dollar / New Zealand Dollar", CADJPY: "Canadian Dollar / Japanese Yen",
-  CHFJPY: "Swiss Franc / Japanese Yen", NZDJPY: "New Zealand Dollar / Japanese Yen",
-  GBPCHF: "British Pound / Swiss Franc", GBPAUD: "British Pound / Australian Dollar",
-  GBPCAD: "British Pound / Canadian Dollar", GBPNZD: "British Pound / New Zealand Dollar",
-  AUDCAD: "Australian Dollar / Canadian Dollar", AUDCHF: "Australian Dollar / Swiss Franc",
-  NZDCAD: "New Zealand Dollar / Canadian Dollar", NZDCHF: "New Zealand Dollar / Swiss Franc",
-  EURNZD: "Euro / New Zealand Dollar", USDSEK: "US Dollar / Swedish Krona",
-  USDNOK: "US Dollar / Norwegian Krone", USDMXN: "US Dollar / Mexican Peso",
-  USDZAR: "US Dollar / South African Rand", USDTRY: "US Dollar / Turkish Lira",
-  USDCNH: "US Dollar / Offshore Yuan", EURSEK: "Euro / Swedish Krona",
-  EURNOK: "Euro / Norwegian Krone", EURTRY: "Euro / Turkish Lira",
-  EURPLN: "Euro / Polish Zloty", USDHUF: "US Dollar / Hungarian Forint",
-  USDSGD: "US Dollar / Singapore Dollar", USDHKD: "US Dollar / Hong Kong Dollar",
-  USDPLN: "US Dollar / Polish Zloty",
-};
-
-// A few popular stocks (work with a Twelve Data key or Yahoo).
-const STOCKS = ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META", "AMD", "NFLX", "COIN", "MSTR"];
-
-const POPULAR_CRYPTO = [
-  "BTC", "ETH", "SOL", "XRP", "BNB", "ADA", "AVAX", "LINK", "DOT",
-  "LTC", "BCH", "TON",
-];
-
-const CATALOG = new Map<string, SymbolMeta>();
-
-function register(meta: SymbolMeta): void {
-  CATALOG.set(meta.symbol, meta);
-}
-
-function forexMeta(symbol: string): SymbolMeta {
-  const base = symbol.slice(0, 3);
-  const quote = symbol.slice(3, 6);
-  return {
-    symbol,
-    name: FOREX_NAMES[symbol] || `${base} / ${quote}`,
-    type: "forex",
-    providers: {
-      twelvedata: `${base}/${quote}`,
-      yahoo: `${symbol}=X`,
-      stooq: symbol.toLowerCase(),
-    },
-  };
-}
-
-function metalMeta(symbol: string): SymbolMeta {
-  const base = symbol.slice(0, 3);
-  const quote = symbol.slice(3, 6);
-  const meta: SymbolMeta = {
-    symbol,
-    name: `${base} / ${quote} spot`,
-    type: "commodity",
-    providers: {},
-  };
-  if (quote === "USD") {
-    meta.providers.twelvedata = `${base}/${quote}`;
-    meta.providers.yahoo = YAHOO_METAL[base] ?? null;
-    meta.providers.stooq = symbol.toLowerCase();
-    const futures = BINANCE_FUTURES[base];
-    if (futures) {
-      meta.providers.binanceFutures = futures;
-      if (base !== "XAU") {
-        meta.note = `${base} via the Binance ${futures} perpetual when no spot feed is available.`;
-      }
+// Asset class, inferred from the broker name. Drives the type badge in the UI.
+function inferType(brokerName: string): SymbolType {
+  const raw = brokerName.toUpperCase();
+  const n = raw.replace(/\s+/g, "");
+  if (/^(BTC|ETH)(USD|USDT)$/.test(n)) return "crypto";
+  // Metal bases must be checked BEFORE the FX-pair rule: XAUUSD is a six-letter
+  // pair ending in USD, so a quote-currency check first would file gold as forex.
+  if (/^X(AU|AG|PT|PD)$/.test(n.slice(0, 3))) return "commodity";
+  if (/^(GOLD|SILVER|PLATINUM|PALLADIUM)/.test(n)) return "commodity";
+  // Six letters, all currency codes: FX pair.
+  if (/^[A-Z]{6}$/.test(n)) {
+    if (["USD", "EUR", "GBP", "JPY", "CHF", "AUD", "NZD", "CAD"].includes(n.slice(3, 6))) {
+      return "forex";
     }
-    if (base === "XAU") {
-      meta.providers.binance = "PAXGUSDT";
-      meta.proxy = "PAXG (gold-backed token)";
-    }
-  } else {
-    meta.providers.twelvedata = `${base}/${quote}`;
+    return "crypto";
   }
-  return meta;
+  // Index check runs against the SPACED name: "US 500" needs the word boundary
+  // that stripping the space would destroy.
+  if (/\b(500|30|100|200|225|35|40)\b/.test(raw)) return "index";
+  if (/DOLLAR INDEX|VOLATILITY/.test(raw)) return "index";
+  return "stock";
 }
 
-function cryptoMeta(symbol: string): SymbolMeta {
-  const base = symbol.endsWith("USDT") ? symbol.slice(0, -4) : symbol.replace(/USD$/, "");
-  const canonical = `${base}USD`;
-  return {
-    symbol: canonical,
-    name: `${base} / US Dollar`,
-    type: "crypto",
-    providers: {
-      binance: BINANCE[base] ?? null,
-      twelvedata: `${base}/USD`,
-      yahoo: `${base}-USD`,
-      stooq: null,
-    },
-  };
-}
-
-// ── Register the built-in catalog ──────────────────────────────────────────
-for (const [symbol] of Object.entries(FOREX_NAMES)) register(forexMeta(symbol));
-
-for (const symbol of ["XAUUSD", "XAGUSD", "XPTUSD", "XPDUSD", "XAUEUR", "XAUGBP"]) {
-  register(metalMeta(symbol));
-}
-
-for (const idx of INDICES) {
-  register({
-    symbol: idx.symbol,
-    name: idx.name,
-    type: "index",
-    providers: { twelvedata: idx.twelvedata, yahoo: idx.yahoo, stooq: idx.stooq },
-  });
-}
-
-for (const base of Object.keys(BINANCE)) register(cryptoMeta(`${base}USD`));
-
-for (const ticker of STOCKS) {
-  register({
-    symbol: ticker,
-    name: ticker,
-    type: "stock",
-    providers: { twelvedata: ticker, yahoo: ticker, stooq: `${ticker.toLowerCase()}.us` },
-  });
-}
-
-// ── Resolution ─────────────────────────────────────────────────────────────
-
+/** Uppercase, strip anything that is not a letter or digit. */
 export function normalizeSymbol(input: unknown): string {
   return String(input || "")
     .toUpperCase()
     .replace(/\s+/g, "")
-    .replace(/[/_,-]/g, "")
-    .replace(/^\^/, "")
-    .replace(/(\.US)$/, "")
-    .trim();
+    .replace(/[^A-Z0-9]/g, "");
 }
 
-export function resolveSymbol(input: unknown): SymbolMeta {
+/**
+ * Resolve a user-typed symbol to the broker's exact name, given the set the
+ * account offers. Returns null when the broker cannot trade it.
+ */
+export function resolveAgainstBroker(input: unknown, available: string[]): string | null {
   const cleaned = normalizeSymbol(input);
-  if (!cleaned) throw new Error("Empty symbol");
+  if (!cleaned) return null;
 
-  const direct = CATALOG.get(cleaned);
-  if (direct) return { ...direct, providers: { ...direct.providers } };
-
-  // Crypto quoted in USDT.
-  if (cleaned.endsWith("USDT")) {
-    const base = cleaned.slice(0, -4);
-    if (CRYPTO_BASES.has(base)) return cryptoMeta(cleaned);
+  const byPunctInsensitive = new Map<string, string>();
+  const byWordy = new Map<string, string>();
+  for (const name of available) {
+    const flat = normalizeSymbol(name);
+    if (flat && !byPunctInsensitive.has(flat)) byPunctInsensitive.set(flat, name);
+    const wordy = name.toUpperCase().replace(/\s+/g, " ");
+    if (wordy && !byWordy.has(wordy)) byWordy.set(wordy, name);
   }
 
-  // Crypto quoted in USD but not in the catalog.
-  if (cleaned.endsWith("USD") && CRYPTO_BASES.has(cleaned.slice(0, -3))) {
-    return cryptoMeta(cleaned);
+  const alias = ALIASES[cleaned];
+  if (alias) {
+    // The alias is only trusted if this broker actually lists it.
+    if (available.includes(alias)) return alias;
+    const viaFlat = byPunctInsensitive.get(normalizeSymbol(alias));
+    if (viaFlat) return viaFlat;
   }
 
-  // Six-letter pair (forex or metal), e.g. GBPJPY, XAUUSD.
-  if (/^[A-Z]{6}$/.test(cleaned)) {
-    const base = cleaned.slice(0, 3);
-    const quote = cleaned.slice(3, 6);
-    if (METALS.has(base) && FIAT.has(quote)) return metalMeta(cleaned);
-    if (FIAT.has(base) && FIAT.has(quote)) return forexMeta(cleaned);
-  }
+  if (available.includes(cleaned)) return cleaned;
+  const flat = byPunctInsensitive.get(cleaned);
+  if (flat) return flat;
 
-  // Unknown asset: treat as a stock/ticker and let the providers try.
-  if (/^[A-Z][A-Z0-9.]{0,9}$/.test(cleaned)) {
-    const type: SymbolType = "stock";
-    return {
-      symbol: cleaned,
-      name: cleaned,
-      type,
-      providers: { twelvedata: cleaned, yahoo: cleaned, stooq: `${cleaned.toLowerCase()}.us` },
-    };
+  // Last resort: a single unambiguous word match ("Gold", "Silver 5").
+  const words = String(input).toUpperCase().trim().split(/\s+/);
+  if (words.length >= 2) {
+    const phrase = words.join(" ");
+    if (byWordy.has(phrase)) return byWordy.get(phrase)!;
   }
-
-  throw new Error(`Unrecognized symbol "${input}"`);
+  return null;
 }
 
-export function catalogList(): CatalogEntry[] {
-  return [...CATALOG.values()].map((m) => ({ symbol: m.symbol, name: m.name, type: m.type }));
+/** Build the meta the analysis engine expects, from a resolved broker name. */
+export function toSymbolMeta(brokerName: string, requested?: string): SymbolMeta {
+  return {
+    symbol: requested && requested !== brokerName ? requested : brokerName,
+    name: brokerName,
+    type: inferType(brokerName),
+    providers: { ctrader: brokerName },
+    note: requested && requested !== brokerName ? `cTrader symbol: ${brokerName}` : undefined,
+  };
 }
 
-export function searchCatalog(query: unknown, limit = 12): CatalogEntry[] {
+/**
+ * The add-market catalog: every symbol the account can trade, plus an entry for
+ * each alias that this account can actually serve (so US500 appears even though
+ * the broker calls it "US 500").
+ */
+export function buildCatalog(available: string[]): CatalogEntry[] {
+  const out = new Map<string, CatalogEntry>();
+  for (const name of available) {
+    const short = normalizeSymbol(name);
+    if (!short) continue;
+    out.set(short, { symbol: short, name, type: inferType(name) });
+  }
+  for (const [alias, target] of Object.entries(ALIASES)) {
+    if (out.has(alias) || !available.includes(target)) continue;
+    out.set(alias, { symbol: alias, name: target, type: inferType(target) });
+  }
+  return [...out.values()];
+}
+
+/** Substring search over the catalog, for the add-market autocomplete. */
+export function searchCatalog(
+  entries: CatalogEntry[],
+  query: unknown,
+  limit = 12
+): CatalogEntry[] {
   const q = normalizeSymbol(query);
-  if (!q) {
-    return POPULAR_CRYPTO.map((b) => CATALOG.get(`${b}USD`)).filter(Boolean) as CatalogEntry[];
-  }
+  if (!q) return entries.slice(0, limit);
   const results: CatalogEntry[] = [];
-  for (const meta of CATALOG.values()) {
-    if (
-      meta.symbol.includes(q) ||
-      meta.name.toUpperCase().includes(q) ||
-      (meta.providers.twelvedata || "").toUpperCase().includes(q)
-    ) {
-      results.push({ symbol: meta.symbol, name: meta.name, type: meta.type });
+  for (const e of entries) {
+    if (normalizeSymbol(e.symbol).includes(q) || e.name.toUpperCase().replace(/\s+/g, "").includes(q)) {
+      results.push(e);
       if (results.length >= limit) break;
     }
   }

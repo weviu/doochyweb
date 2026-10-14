@@ -1,24 +1,36 @@
-// Central timeframe definition. Each provider maps an id to its own interval
-// string using the fields below, so adding a provider means touching one place.
-// Ported unchanged from the standalone `gauge` project.
+// Central timeframe definition. Each source maps an id to its own vocabulary,
+// so adding a source means touching one place.
+//
+// cTrader serves bars through ProtoOAGetTrendbarsReq, whose `period` is an enum
+// (not a minute count) and which caps how far back a single request may reach
+// per period. Both are encoded here so the provider stays a thin adapter.
+//
+// Ported from the standalone `gauge` project, then reduced to the one source
+// that remains.
 
 import type { Timeframe } from "./types";
 
+/** ProtoOATrendbarPeriod enum values. NOT the minute counts. */
+const M1 = 1, M2 = 2, M3 = 3, M4 = 4, M5 = 5, M10 = 6, M15 = 7, M30 = 8;
+const H1 = 9, H4 = 10, H12 = 11, D1 = 12, W1 = 13, MN1 = 14;
+
+// toTimestamp - fromTimestamp ceilings, from the proto's own documentation.
+const FIVE_WEEKS = 302_400_000;      // M1, M2, M3, M4, M5
+const THIRTY_FIVE_WEEKS = 21_168_000_000; // M10, M15, M30, H1
+const ONE_YEAR = 31_622_400_000;     // H4, H12, D1
+const FIVE_YEARS = 158_112_000_000;  // W1, MN1
+
 export const TIMEFRAMES: Timeframe[] = [
-  // Intraday starts at 1m. Binance and Twelve Data serve 1m/3m natively; Yahoo
-  // has 1m but no 3m, so 3m is aggregated from 1m (see yahooFallback). Yahoo
-  // caps 1m history at roughly a week, which is still far more than the 480
-  // bars a 200-period MA needs.
-  { id: "1m", label: "1 min", ms: 60 * 1000, ttl: 60, binance: "1m", twelvedata: "1min", yahoo: "1m", yahooRange: "5d" },
-  { id: "3m", label: "3 min", ms: 3 * 60 * 1000, ttl: 60, binance: "3m", twelvedata: "3min", yahoo: null, yahooRange: "5d", yahooFallback: { interval: "1m", range: "5d", factor: 3 } },
-  { id: "5m", label: "5 min", ms: 5 * 60 * 1000, ttl: 60, binance: "5m", twelvedata: "5min", yahoo: "5m", yahooRange: "5d" },
-  { id: "15m", label: "15 min", ms: 15 * 60 * 1000, ttl: 120, binance: "15m", twelvedata: "15min", yahoo: "15m", yahooRange: "1mo" },
-  { id: "30m", label: "30 min", ms: 30 * 60 * 1000, ttl: 180, binance: "30m", twelvedata: "30min", yahoo: "30m", yahooRange: "1mo" },
-  { id: "1h", label: "1 hour", ms: 60 * 60 * 1000, ttl: 300, binance: "1h", twelvedata: "1h", yahoo: "60m", yahooRange: "6mo" },
-  { id: "4h", label: "4 hours", ms: 4 * 60 * 60 * 1000, ttl: 600, binance: "4h", twelvedata: "4h", yahoo: null, yahooRange: "1y", yahooFallback: { interval: "60m", range: "1y", factor: 4 } },
-  { id: "1d", label: "1 day", ms: 24 * 60 * 60 * 1000, ttl: 900, binance: "1d", twelvedata: "1day", yahoo: "1d", yahooRange: "2y" },
-  { id: "1w", label: "1 week", ms: 7 * 24 * 60 * 60 * 1000, ttl: 3600, binance: "1w", twelvedata: "1week", yahoo: "1wk", yahooRange: "10y" },
-  { id: "1M", label: "1 month", ms: 30 * 24 * 60 * 60 * 1000, ttl: 3600, binance: "1M", twelvedata: "1month", yahoo: "1mo", yahooRange: "10y" },
+  { id: "1m",  label: "1 min",   ms: 60 * 1000,           ttl: 60,   ctrader: M1,  ctraderMaxRange: FIVE_WEEKS },
+  { id: "3m",  label: "3 min",   ms: 3 * 60 * 1000,       ttl: 60,   ctrader: M3,  ctraderMaxRange: FIVE_WEEKS },
+  { id: "5m",  label: "5 min",   ms: 5 * 60 * 1000,       ttl: 60,   ctrader: M5,  ctraderMaxRange: FIVE_WEEKS },
+  { id: "15m", label: "15 min",  ms: 15 * 60 * 1000,      ttl: 120,  ctrader: M15, ctraderMaxRange: THIRTY_FIVE_WEEKS },
+  { id: "30m", label: "30 min",  ms: 30 * 60 * 1000,      ttl: 180,  ctrader: M30, ctraderMaxRange: THIRTY_FIVE_WEEKS },
+  { id: "1h",  label: "1 hour",  ms: 60 * 60 * 1000,      ttl: 300,  ctrader: H1,  ctraderMaxRange: THIRTY_FIVE_WEEKS },
+  { id: "4h",  label: "4 hours", ms: 4 * 60 * 60 * 1000,  ttl: 600,  ctrader: H4,  ctraderMaxRange: ONE_YEAR },
+  { id: "1d",  label: "1 day",   ms: 24 * 60 * 60 * 1000, ttl: 900,  ctrader: D1,  ctraderMaxRange: ONE_YEAR },
+  { id: "1w",  label: "1 week",  ms: 7 * 24 * 60 * 60 * 1000, ttl: 3600, ctrader: W1, ctraderMaxRange: FIVE_YEARS },
+  { id: "1M",  label: "1 month", ms: 30 * 24 * 60 * 60 * 1000, ttl: 3600, ctrader: MN1, ctraderMaxRange: FIVE_YEARS },
 ];
 
 export const DEFAULT_TIMEFRAME = "1d";

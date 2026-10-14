@@ -41,6 +41,19 @@ export function isTokenError(err: any): boolean {
   return !!err && TOKEN_ERROR_CODES.has(String(err?.errorCode ?? "").toUpperCase());
 }
 
+// Raised when a no-rotate caller (the Analysis page) hits a token error. Says
+// what to do, because the usual automatic recovery is deliberately disabled on
+// that path.
+function marketTokenMessage(err: any): string {
+  const code = String(err?.errorCode ?? "TOKEN_ERROR");
+  return (
+    `cTrader rejected the stored access token (${code}). ` +
+    "Market analysis never refreshes tokens, because a refresh rotates the grant and " +
+    "would invalidate any other process on this account. " +
+    "Re-enter the cTrader credentials in Settings to issue a new token."
+  );
+}
+
 // The layer has no request timeout and its socket close/error handlers are
 // no-ops, so a silently dropped TCP link would leave every await pending
 // forever. Wrap "*.Req" calls with a race against a timeout; events resolve
@@ -307,21 +320,34 @@ export class UserSockets {
   // channel. Account-scoped requests re-auth the account post-rotation.
   // clientMsgId is echoed back by ProtoOAOrderErrorEvent, so amends/places that
   // correlate by message id pass it here.
-  async send(env: CtraderEnv, name: string, data?: any, opts?: { ctid?: number; clientMsgId?: string }): Promise<any> {
+  //
+  // Pass rotateOnTokenError:false to forbid the refresh. cTrader's refresh is
+  // single-use and rotates the grant, so a refresh from a read-only consumer
+  // (the Analysis page) can strand a trading process on the same account. That
+  // path instead surfaces the failure and lets the operator re-connect
+  // credentials deliberately. See doochy/scanner PLAN.md, "TOKEN SAFETY".
+  async send(
+    env: CtraderEnv,
+    name: string,
+    data?: any,
+    opts?: { ctid?: number; clientMsgId?: string; rotateOnTokenError?: boolean }
+  ): Promise<any> {
+    const mayRotate = opts?.rotateOnTokenError !== false;
     try {
-      if (opts?.ctid != null) await this.ensureAccountAuthed(env, opts.ctid);
+      if (opts?.ctid != null) await this.ensureAccountAuthed(env, opts.ctid, mayRotate);
       const ch = await this.channel(env);
       return await ch.send(name, data, opts?.clientMsgId);
     } catch (err: any) {
       if (!isTokenError(err)) throw err;
+      if (!mayRotate) throw new Error(marketTokenMessage(err));
       await this.rotateTokens();
-      if (opts?.ctid != null) await this.ensureAccountAuthed(env, opts.ctid);
+      if (opts?.ctid != null) await this.ensureAccountAuthed(env, opts.ctid, true);
       const ch = await this.channel(env);
       return await ch.send(name, data, opts?.clientMsgId);
     }
   }
 
-  async ensureAccountAuthed(env: CtraderEnv, ctid: number): Promise<void> {
+  async ensureAccountAuthed(env: CtraderEnv, ctid: number, mayRotate = true): Promise<void> {
     const ch = await this.channel(env);
     if (ch.authedAccounts.has(ctid)) return;
     try {
@@ -338,8 +364,9 @@ export class UserSockets {
         return;
       }
       if (isTokenError(err)) {
+        if (!mayRotate) throw new Error(marketTokenMessage(err));
         await this.rotateTokens();
-        await this.ensureAccountAuthed(env, ctid);
+        await this.ensureAccountAuthed(env, ctid, true);
         return;
       }
       throw err;

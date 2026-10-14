@@ -31,22 +31,15 @@ interface CardProps {
   onRemove: (symbol: string) => void;
 }
 
+// One source now (cTrader), so the badge just says where the bars came from,
+// with a dot that distinguishes a cache hit from a fresh broker read.
 function SourceBadge({ a }: { a: MarketAnalysis }) {
-  if (a.simulated) {
-    return (
-      <span className="inline-flex min-w-0 items-center gap-1.5">
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-violet-400" />
-        <span className="truncate text-fg-faint text-[10.5px]">Simulated data</span>
-      </span>
-    );
-  }
-  const label = a.proxy ? `${providerName(a.provider)} · ${a.proxy}` : providerName(a.provider);
   return (
     <span className="inline-flex min-w-0 items-center gap-1.5">
       <span
-        className={"h-1.5 w-1.5 shrink-0 rounded-full " + (a.cached ? "bg-accent" : "bg-amber-500")}
+        className={"h-1.5 w-1.5 shrink-0 rounded-full " + (a.cached ? "bg-fg-faint" : "bg-accent")}
       />
-      <span className="truncate text-fg-faint text-[10.5px]">{label}</span>
+      <span className="truncate text-fg-faint text-[10.5px]">{providerName(a.provider)}</span>
     </span>
   );
 }

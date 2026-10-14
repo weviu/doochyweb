@@ -1,14 +1,20 @@
-// Provider orchestrator: walks providers in priority order until one returns
-// usable candles, caches the result, and reports which provider was used.
-// Ported from the standalone `gauge` project.
+// Bar access for the Analysis page. One source: cTrader.
 //
-// The cache is keyed by provider+symbol+timeframe with a per-timeframe TTL, so
-// a burst of dashboard refreshes (and the detail view's all-timeframe sweep)
-// mostly hit memory instead of burning free-tier API quota.
+// The read path is three layers, so a page load never waits on the broker:
+//
+//   memory  - same-process repeat reads and the detail view's all-timeframe sweep
+//   Mongo   - survives restarts, so a cold process still renders instantly
+//   cTrader - the only network hop, and only when both caches miss or go stale
+//
+// When Mongo holds a stale series it is returned immediately and refreshed in
+// the background, so the page is never blocked waiting for the broker. Only a
+// first-ever fetch for a symbol/timeframe blocks, and that is unavoidable.
 
 import { getTimeframe } from "../timeframes";
 import * as breaker from "./breaker";
+import { readSeries, writeSeries, type StoredBar } from "../persist";
 import * as rateLimit from "./rateLimit";
+import { ctrader, cTraderCatalog, marketSymbolRef } from "./ctrader";
 import type {
   AnalysisSettings,
   Candle,
@@ -19,140 +25,165 @@ import type {
   SymbolMeta,
   Timeframe,
 } from "../types";
-import { binance } from "./binance";
-import { binanceFutures } from "./binanceFutures";
-import { simulated } from "./simulated";
-import { stooq } from "./stooq";
-import { twelvedata } from "./twelvedata";
-import { yahoo } from "./yahoo";
 
-const REGISTRY: Record<ProviderId, MarketProvider> = {
-  binance,
-  binanceFutures,
-  twelvedata,
-  yahoo,
-  stooq,
-  simulated,
-};
+const REGISTRY: Record<ProviderId, MarketProvider> = { ctrader };
 
-const CRYPTO_ORDER: ProviderId[] = ["binance", "binanceFutures", "twelvedata", "yahoo", "simulated"];
-// binanceFutures leads because it is free, unlimited and carries metals that the
-// other free sources cannot reach. Symbols without a futures mapping skip it
-// instantly via supports(), so it costs nothing for forex and equities.
-const GENERAL_ORDER: ProviderId[] = ["binanceFutures", "twelvedata", "yahoo", "stooq", "binance", "simulated"];
+const ORDER: ProviderId[] = ["ctrader"];
 
-const DEFAULT_LIMIT = 480;
-
-/** Bars actually returned by the provider that answered, before aggregation. */
+/** Bars actually returned before a result is trusted. */
 export const MIN_CANDLES = 30;
 
 interface CacheEntry {
   at: number;
-  value: CandleResult;
+  series: Candle[];
 }
 
 const cache = new Map<string, CacheEntry>();
 
-// Symbols are analysed this many at a time. Upstream sources (Binance, Yahoo)
-// are the real constraint, not this app; 8 is comfortably inside their burst
-// tolerance and cuts sweep latency roughly in half versus 4. Providers that
-// are down are skipped outright by the breaker, so the parallelism is spent on
-// sources that actually answer.
-const SWEEP_CONCURRENCY = 8;
+// How long to skip cTrader after it says "You are being rate limited". Short,
+// because the limit is a pacing window rather than an outage.
+const RATE_LIMIT_COOLDOWN_MS = 20_000;
 
-// A single sweep (the detail view's `all=1`) asks for 8 timeframes at once.
-// Without a cap that would issue 8 concurrent requests per provider; 4 keeps
-// us inside Twelve Data's 8 req/min burst tolerance.
-const MAX_SWEEP = 4;
+let lastRateLimitAt = 0;
 
-export function providerOrder(meta: SymbolMeta): ProviderId[] {
-  return meta.type === "crypto" ? CRYPTO_ORDER : GENERAL_ORDER;
+function inRateLimitWindow(now: number): boolean {
+  return now - lastRateLimitAt < RATE_LIMIT_COOLDOWN_MS;
 }
 
-/**
- * Fetch candles for a market/timeframe, trying each provider in turn.
- * Throws only when every provider has failed.
- */
+/** Background refreshes already in flight, so a poll does not stack duplicates. */
+const refreshing = new Set<string>();
+
+export interface BarsResult {
+  provider: ProviderId;
+  bars: Candle[];
+  warnings: ProviderWarning[];
+  cached: boolean;
+  /** True when the broker is updating this series but we served stored bars. */
+  stale: boolean;
+}
+
 export async function getCandles(
   meta: SymbolMeta,
   timeframeId: string,
   settings: AnalysisSettings = {} as AnalysisSettings,
   { force = false }: { force?: boolean } = {}
-): Promise<CandleResult & { warnings: ProviderWarning[]; cached: boolean }> {
-  const tf: Timeframe = { ...getTimeframe(timeframeId), limit: DEFAULT_LIMIT };
-
+): Promise<BarsResult> {
+  const tf: Timeframe = getTimeframe(timeframeId);
   const warnings: ProviderWarning[] = [];
+  const pid = ORDER[0];
+  const key = `${pid}:${meta.symbol}:${tf.id}`;
 
-  // Report a skipped provider as a warning so the UI can still explain why a
-  // symbol fell through to a lower-priority source (or failed outright).
-  for (const pid of providerOrder(meta)) {
-    if (pid === "simulated" && !settings.allowSimulated) {
-      warnings.push({ provider: pid, message: "disabled (simulated data is off)" });
-      continue;
-    }
-    if (breaker.isAvailable(pid)) continue;
-    warnings.push({
-      provider: pid,
-      message: `temporarily disabled (failing, retry in ${Math.ceil(
-        breaker.cooldownRemaining(pid) / 1000
-      )}s)`,
-    });
+  // 1. Hot memory cache.
+  const hot = cache.get(key);
+  if (!force && hot && Date.now() - hot.at < tf.ttl * 1000) {
+    breaker.recordSuccess(pid);
+    return { provider: pid, bars: hot.series, warnings, cached: true, stale: false };
   }
 
-  const order = providerOrder(meta).filter((pid) => {
-    const p = REGISTRY[pid];
-    if (!p || !p.supports(meta, settings, tf)) return false;
-    // The simulator is opt-in. When it is off, a market with no working source
-    // fails loudly instead of rendering an invented price.
-    if (pid === "simulated" && !settings.allowSimulated) return false;
-    return breaker.isAvailable(pid);
-  });
+  const ref = await marketSymbolRef(meta);
+  const freshAfter = Date.now() - tf.ttl * 1000;
 
-  for (const pid of order) {
-    const p = REGISTRY[pid];
-    const key = `${pid}:${meta.symbol}:${tf.id}`;
-    const hit = cache.get(key);
-    if (!force && hit && Date.now() - hit.at < tf.ttl * 1000) {
-      breaker.recordSuccess(pid);
-      return { ...hit.value, warnings, cached: true };
-    }
-    try {
-      // Respect the provider's quota instead of firing a burst and absorbing
-      // the resulting 429s.
-      await rateLimit.acquire(pid);
-      const candles: Candle[] = await p.fetchCandles(meta, tf, { settings });
-      if (!Array.isArray(candles) || candles.length < MIN_CANDLES) {
-        throw new Error(`only ${candles ? candles.length : 0} candles`);
+  // 2. Mongo. A fresh stored series needs no broker call at all; a stale one is
+  //    still the best answer available, so return it and refresh behind it.
+  if (!force && ref) {
+    const stored = await readSeries(ref.ctid, ref.symbolId, tf.id).catch(() => null);
+    if (stored && stored.bars.length >= MIN_CANDLES) {
+      const fresh = stored.fetchedAt >= freshAfter;
+      cache.set(key, { at: stored.fetchedAt, series: stored.bars });
+      if (fresh) {
+        breaker.recordSuccess(pid);
+        return { provider: pid, bars: stored.bars, warnings, cached: true, stale: false };
       }
-      breaker.recordSuccess(pid);
-      const value: CandleResult = {
-        candles,
-        provider: pid,
-        simulated: pid === "simulated",
-        proxy: pid === "binance" && meta.proxy ? meta.proxy : undefined,
-      };
-      cache.set(key, { at: Date.now(), value });
-      return { ...value, warnings, cached: false };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      breaker.recordFailure(pid, message);
-      warnings.push({ provider: pid, message });
+      void refreshInBackground(pid, meta, tf, key, ref.ctid, ref.symbolId);
+      return { provider: pid, bars: stored.bars, warnings, cached: true, stale: true };
     }
   }
 
-  throw new Error(noSourceError(warnings));
+  // 3. Broker. Nothing usable stored, so this one has to wait.
+  const candles = await fetchFromBroker(pid, meta, tf, warnings);
+  cache.set(key, { at: Date.now(), series: candles });
+  if (ref) void writeSeries(ref.ctid, ref.symbolId, tf.id, candles).catch(() => {});
+  return { provider: pid, bars: candles, warnings, cached: false, stale: false };
 }
 
-/**
- * The only diagnostic a user gets when a market cannot be priced, so it has to
- * name each provider and why it failed, plus the way out. Exported for testing.
- */
+/** Read the bars behind a resolved symbol, or throw the aggregated reason. */
+export function cachedBars(meta: SymbolMeta, timeframeId: string): Candle[] | null {
+  const entry = cache.get(`${ORDER[0]}:${meta.symbol}:${timeframeId}`);
+  return entry ? entry.series : null;
+}
+
+async function fetchFromBroker(
+  pid: ProviderId,
+  meta: SymbolMeta,
+  tf: Timeframe,
+  warnings: ProviderWarning[]
+): Promise<Candle[]> {
+  const p = REGISTRY[pid];
+  try {
+    const release = await rateLimit.acquire(pid);
+    try {
+      const candles = await p.fetchCandles(meta, tf, { settings: {} as AnalysisSettings });
+      if (!Array.isArray(candles) || candles.length < MIN_CANDLES) {
+        throw new Error(
+          `only ${candles ? candles.length : 0} bars (cTrader may not keep that much history)`
+        );
+      }
+      breaker.recordSuccess(pid);
+      return candles;
+    } finally {
+      release();
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const rateLimited = /rate limit|BLOCKED_PAYLOAD_TYPE/i.test(message);
+    if (rateLimited) lastRateLimitAt = Date.now();
+    breaker.recordFailure(pid, rateLimited ? "rate limit" : message);
+    warnings.push({ provider: pid, message });
+    // A previous run may have left usable bars in memory even when the broker
+    // is refusing; stale data beats an empty card.
+    const stale = cache.get(`${pid}:${meta.symbol}:${tf.id}`);
+    if (stale) return stale.series;
+    throw new Error(noSourceError(warnings));
+  }
+}
+
+async function refreshInBackground(
+  pid: ProviderId,
+  meta: SymbolMeta,
+  tf: Timeframe,
+  key: string,
+  ctid: number,
+  symbolId: number
+): Promise<void> {
+  if (refreshing.has(key)) return;
+  if (inRateLimitWindow(Date.now())) return;
+  refreshing.add(key);
+  try {
+    const release = await rateLimit.acquire(pid);
+    let bars: Candle[];
+    try {
+      bars = await REGISTRY[pid].fetchCandles(meta, tf, { settings: {} as AnalysisSettings });
+      if (!Array.isArray(bars) || bars.length < MIN_CANDLES) throw new Error("too few bars");
+      breaker.recordSuccess(pid);
+    } finally {
+      release();
+    }
+    cache.set(key, { at: Date.now(), series: bars });
+    await writeSeries(ctid, symbolId, tf.id, bars as StoredBar[]).catch(() => {});
+  } catch {
+    // Silent by design: the caller already has usable stored bars.
+  } finally {
+    refreshing.delete(key);
+  }
+}
+
+/** The only diagnostic a user gets when bars cannot be read, so it has to be
+ *  specific about what failed and why. Exported for testing. */
 export function noSourceError(warnings: ProviderWarning[]): string {
   const detail = warnings.map((w) => `${w.provider}: ${w.message}`).join("; ");
   return (
-    `No data source available (${detail}). ` +
-    "Set TWELVEDATA_API_KEY on the server to cover forex, metals, indices and stocks, " +
-    "or switch simulated data on in Analysis settings."
+    `Could not read bars from cTrader (${detail}). ` +
+    "Check that the account is connected and that the broker lists this symbol."
   );
 }
 
@@ -160,26 +191,8 @@ export function clearCache(): void {
   cache.clear();
   breaker.reset();
   rateLimit.reset();
+  refreshing.clear();
+  lastRateLimitAt = 0;
 }
 
-export { SWEEP_CONCURRENCY };
-
-/**
- * Run `fn` over `items` with bounded concurrency, preserving input order.
- * Used for per-symbol sweeps so a large watchlist cannot open an unbounded
- * number of upstream requests at once.
- */
-export async function mapPool<T, R>(items: T[], concurrency: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let cursor = 0;
-  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (cursor < items.length) {
-      const index = cursor++;
-      results[index] = await fn(items[index], index);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
-
-export { MAX_SWEEP };
+export { ctrader, cTraderCatalog };

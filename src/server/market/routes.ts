@@ -13,7 +13,8 @@ import { analyze, setStrongRatio } from "./analysis";
 import { authRequired } from "../auth";
 import { resolveMarketAccount } from "./account";
 import { clearCache, cTraderCatalog, getCandles } from "./providers/index";
-import { buildCatalog, resolveAgainstBroker, searchCatalog, toSymbolMeta } from "./symbols";
+import { cryptoPairs } from "./crypto";
+import { buildCatalog, normalizeSymbol, resolveAgainstBroker, searchCatalog, toSymbolMeta } from "./symbols";
 import {
   addToWatchlist,
   getSettings,
@@ -45,25 +46,77 @@ const SWEEP_CONCURRENCY = 6;
 // each is a separate payload type.
 const MAX_SWEEP = 4;
 
-/** Broker symbols for the configured account, or [] with no account attached. */
-async function brokerCatalog(): Promise<CatalogEntry[]> {
+/**
+ * The full catalog: every symbol the account can trade, with the Binance crypto
+ * universe merged in.
+ *
+ * Each source is optional. Without an account the crypto list still serves, so
+ * the page is not blank just because cTrader credentials are missing.
+ *
+ * `brokerError` is kept because a missing broker catalog must not be reported as
+ * "that symbol is not tradable": with an expired cTrader token the whole list
+ * comes back empty, and every forex and metals symbol would otherwise claim it
+ * does not exist.
+ */
+async function loadCatalog(): Promise<{ items: CatalogEntry[]; brokerError: string | null }> {
+  const crypto = await cryptoPairs();
+  let broker: string[] = [];
+  let brokerError: string | null = null;
   try {
-    return buildCatalog(await cTraderCatalog());
-  } catch {
-    return [];
+    broker = await cTraderCatalog();
+  } catch (err) {
+    brokerError = message(err);
   }
+  return { items: buildCatalog(broker, crypto), brokerError };
+}
+
+/**
+ * Resolve a requested symbol to the sources that can serve it.
+ *
+ * The two universes are kept apart on purpose. A crypto catalog entry carries the
+ * Binance pair as its `name`, so handing the whole catalog to the broker
+ * resolver would let it match "SOLUSDT" as though it were a broker symbol.
+ */
+function resolveMeta(symbol: string, catalog: CatalogEntry[]): SymbolMeta | null {
+  const short = normalizeSymbol(symbol);
+  const entry = catalog.find((c) => c.symbol === short);
+  const pair = entry?.provider === "binance" ? entry.name : null;
+  const brokerNames = catalog.filter((c) => c.provider !== "binance").map((c) => c.name);
+  const brokerName = resolveAgainstBroker(symbol, brokerNames);
+  if (!brokerName && !pair) return null;
+  return toSymbolMeta(brokerName, symbol, pair);
+}
+
+/**
+ * Why a symbol could not be resolved. Distinguishes "the broker is unreachable"
+ * from "this symbol genuinely is not offered", which look identical when the
+ * catalog is empty but call for very different fixes.
+ */
+function unresolvableError(symbol: string, brokerError: string | null): string {
+  if (brokerError) {
+    return (
+      `Could not read the cTrader symbol list, so "${symbol}" cannot be checked. ` +
+      `${brokerError.slice(0, 200)}`
+    );
+  }
+  return `"${symbol}" is neither tradable on the connected cTrader account nor listed on Binance`;
 }
 
 // ---------------------------------------------------------------- config
 
-let catalogCache: { at: number; items: CatalogEntry[] } | null = null;
+let catalogCache: { at: number; items: CatalogEntry[]; brokerError: string | null } | null = null;
 const CATALOG_TTL_MS = 60_000;
 
 async function cachedCatalog(): Promise<CatalogEntry[]> {
-  if (catalogCache && Date.now() - catalogCache.at < CATALOG_TTL_MS) return catalogCache.items;
-  const items = await brokerCatalog();
-  catalogCache = { at: Date.now(), items };
-  return items;
+  return (await cachedCatalogFull()).items;
+}
+
+/** The catalog plus whatever went wrong reading the broker half. */
+async function cachedCatalogFull(): Promise<{ items: CatalogEntry[]; brokerError: string | null }> {
+  if (catalogCache && Date.now() - catalogCache.at < CATALOG_TTL_MS) return catalogCache;
+  const loaded = await loadCatalog();
+  catalogCache = { at: Date.now(), ...loaded };
+  return catalogCache;
 }
 
 /** Force the catalog to be re-read, e.g. after credentials change. */
@@ -79,7 +132,7 @@ marketRouter.get("/config", async (_req, res) => {
     defaultTimeframe: DEFAULT_TIMEFRAME,
     settings,
     catalog: await cachedCatalog(),
-    source: "ctrader",
+    source: "ctrader+binance",
   });
 });
 
@@ -119,17 +172,15 @@ marketRouter.post("/watchlist", authRequired, async (req, res) => {
     res.status(400).json({ error: "symbol is required" });
     return;
   }
-  const catalog = await cachedCatalog();
-  const brokerName = resolveAgainstBroker(symbol, catalog.map((c) => c.name));
-  if (!brokerName) {
-    res.status(400).json({
-      error: `"${symbol}" is not tradable on the connected cTrader account`,
-    });
+  const { items: catalog, brokerError } = await cachedCatalogFull();
+  const typed = normalizeSymbol(symbol);
+  const meta = resolveMeta(typed, catalog);
+  if (!meta) {
+    res.status(400).json({ error: unresolvableError(typed, brokerError) });
     return;
   }
   // Store the short form the user typed, so the watchlist stays readable.
-  const canonical = catalog.find((c) => c.name === brokerName)?.symbol ?? String(symbol).toUpperCase();
-  res.json({ symbols: await addToWatchlist(canonical) });
+  res.json({ symbols: await addToWatchlist(meta.symbol) });
 });
 
 marketRouter.delete("/watchlist", authRequired, async (req, res) => {
@@ -171,11 +222,11 @@ marketRouter.get("/analysis", async (req, res) => {
   // prime it from the stored settings before every sweep.
   const { strongRatio } = await getSettings();
   setStrongRatio(strongRatio);
-  const catalog = await cachedCatalog();
+  const { items: catalog, brokerError } = await cachedCatalogFull();
   // Resolved once per sweep: it hits Mongo, and per-symbol it was pure overhead.
   const settings = await publicSettings();
   const results = await mapPool(symbols, SWEEP_CONCURRENCY, (symbol) =>
-    analyzeSymbol(symbol, timeframe, catalog, settings)
+    analyzeSymbol(symbol, timeframe, catalog, settings, false, brokerError)
   );
   res.json({ timeframe, results, updatedAt: Date.now() });
 });
@@ -193,9 +244,9 @@ marketRouter.post("/analysis/:symbol/refresh", authRequired, async (req, res) =>
 marketRouter.get("/analysis/:symbol", async (req, res) => {
   const symbol = req.params.symbol;
   const timeframe = req.query.timeframe ? String(req.query.timeframe) : DEFAULT_TIMEFRAME;
-  const catalog = await cachedCatalog();
   const settings = await publicSettings();
-  const result = await analyzeSymbol(symbol, timeframe, catalog, settings);
+  const { items: catalog, brokerError } = await cachedCatalogFull();
+  const result = await analyzeSymbol(symbol, timeframe, catalog, settings, false, brokerError);
   if ((req.query.all === "1" || req.query.all === "true") && result.ok) {
     result.timeframeRatings = await ratingsForAllTimeframes(symbol, catalog, settings);
   }
@@ -207,17 +258,13 @@ async function analyzeSymbol(
   timeframe: string,
   catalog: CatalogEntry[],
   settings: AnalysisSettings,
-  force = false
+  force = false,
+  brokerError: string | null = null
 ): Promise<AnalysisResponse | AnalysisError> {
-  const brokerName = resolveAgainstBroker(symbol, catalog.map((c) => c.name));
-  if (!brokerName) {
-    return {
-      ok: false,
-      symbol,
-      error: `"${symbol}" is not tradable on the connected cTrader account`,
-    };
+  const meta = resolveMeta(symbol, catalog);
+  if (!meta) {
+    return { ok: false, symbol, error: unresolvableError(symbol, brokerError) };
   }
-  const meta: SymbolMeta = toSymbolMeta(brokerName, symbol);
   try {
     const { bars, provider, warnings, cached } = await getCandles(meta, timeframe, settings, { force });
     const result = analyze(bars, meta, timeframe);
@@ -248,9 +295,8 @@ async function ratingsForAllTimeframes(
   catalog: CatalogEntry[],
   settings: AnalysisSettings
 ): Promise<Record<string, TimeframeRating>> {
-  const brokerName = resolveAgainstBroker(symbol, catalog.map((c) => c.name));
-  if (!brokerName) return {};
-  const meta = toSymbolMeta(brokerName, symbol);
+  const meta = resolveMeta(symbol, catalog);
+  if (!meta) return {};
   const entries = await mapPool(TIMEFRAMES, MAX_SWEEP, async (tf) => {
     try {
       const { bars, provider } = await getCandles(meta, tf.id, settings);
@@ -290,8 +336,23 @@ async function mapPool<T, R>(
   return results;
 }
 
+/**
+ * Extract a usable message from anything that was thrown.
+ *
+ * cTrader rejects with a bare PROTO_OA_ERROR_RES object rather than an Error,
+ * so the naive `String(err)` produced "[object Object]" and hid both the code
+ * and the description.
+ */
 function message(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object") {
+    const o = err as { errorCode?: string; description?: string; message?: string; msg?: string };
+    const text = o.description || o.message || o.msg;
+    if (o.errorCode && text) return `${o.errorCode}: ${text}`;
+    if (text) return text;
+    if (o.errorCode) return o.errorCode;
+  }
+  return String(err);
 }
 
 // Re-exported so tests can exercise resolution without a live account.

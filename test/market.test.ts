@@ -10,6 +10,10 @@ import { describe, test } from "node:test";
 import { analyze, RATINGS } from "../src/server/market/analysis";
 import * as ti from "../src/server/market/indicators";
 import { buildCatalog, resolveAgainstBroker, toSymbolMeta, searchCatalog } from "../src/server/market/symbols";
+import { deriveCryptoPairs, cryptoCatalogEntries, type RawPair } from "../src/server/market/crypto";
+import { providerOrder } from "../src/server/market/providers/index";
+import { aggregate } from "../src/server/market/providers/binance";
+import { getTimeframe, TIMEFRAMES } from "../src/server/market/timeframes";
 import { noSourceError } from "../src/server/market/providers/index";
 import * as breaker from "../src/server/market/providers/breaker";
 import type { Candle, Timeframe } from "../src/server/market/types";
@@ -338,5 +342,236 @@ describe("card ordering", () => {
     // Same side, no shift.
     assert.equal(dropIndex(1, 3, "before"), 2);
     assert.equal(dropIndex(1, 3, "after"), 3);
+  });
+});
+
+// ------------------------------------------------------------ crypto routing
+
+const raw = (base: string, quote: string, status = "TRADING"): RawPair => ({
+  symbol: base + quote,
+  baseAsset: base,
+  quoteAsset: quote,
+  status,
+});
+
+describe("Binance crypto catalog", () => {
+  test("keeps one pair per asset and prefers USDT", () => {
+    // SOL is listed against a dozen quotes; only the USDT one should surface.
+    const pairs = deriveCryptoPairs([
+      raw("SOL", "BRL"), raw("SOL", "JPY"), raw("SOL", "USDT"), raw("SOL", "USDC"), raw("SOL", "USD"),
+    ]);
+    assert.deepEqual(pairs, [{ symbol: "SOLUSD", pair: "SOLUSDT", base: "SOL" }]);
+  });
+
+  test("suppresses the USD quote when a USDT quote exists", () => {
+    // The literal case: SOLUSD must not appear beside SOLUSDT.
+    const pairs = deriveCryptoPairs([raw("SOL", "USD"), raw("SOL", "USDT")]);
+    assert.equal(pairs.length, 1);
+    assert.equal(pairs[0].pair, "SOLUSDT");
+    assert.ok(!pairs.some((p) => p.pair === "SOLUSD"));
+  });
+
+  test("falls back to a plain USD pair when no USDT pair exists", () => {
+    assert.deepEqual(deriveCryptoPairs([raw("XYZ", "USD")]), [
+      { symbol: "XYZUSD", pair: "XYZUSD", base: "XYZ" },
+    ]);
+  });
+
+  test("excludes fiat bases so they cannot collide with FX pairs", () => {
+    // Binance lists EURUSDT, which would render as EURUSD and shadow the real
+    // cTrader forex pair.
+    const pairs = deriveCryptoPairs([raw("EUR", "USDT"), raw("BTC", "USDT")]);
+    assert.ok(!pairs.some((p) => p.symbol === "EURUSD"));
+    assert.ok(pairs.some((p) => p.symbol === "BTCUSD"));
+  });
+
+  test("drops USD stablecoins, which would render as USDCUSD", () => {
+    const pairs = deriveCryptoPairs([
+      raw("USDC", "USDT"), raw("TUSD", "USDT"), raw("FDUSD", "USDT"), raw("BTC", "USDT"),
+    ]);
+    assert.deepEqual(pairs.map((p) => p.symbol), ["BTCUSD"]);
+  });
+
+  test("drops unusable tickers: too short, too long, non-ASCII", () => {
+    const pairs = deriveCryptoPairs([
+      raw("A", "USDT"), raw("BROCCOLI714", "USDT"), { ...raw("BTC", "USDT"), baseAsset: "牛来" },
+    ]);
+    assert.deepEqual(pairs, []);
+  });
+
+  test("ignores pairs that are not trading", () => {
+    assert.deepEqual(deriveCryptoPairs([raw("BTC", "USDT", "BREAK")]), []);
+  });
+
+  test("catalog entries are typed crypto and tagged to Binance", () => {
+    const entries = cryptoCatalogEntries(deriveCryptoPairs([raw("SOL", "USDT")]));
+    assert.deepEqual(entries, [
+      { symbol: "SOLUSD", name: "SOLUSDT", type: "crypto", provider: "binance" },
+    ]);
+  });
+});
+
+describe("catalog merge", () => {
+  const crypto = deriveCryptoPairs([raw("BTC", "USDT"), raw("ETH", "USDT"), raw("SOL", "USDT")]);
+
+  test("Binance crypto replaces the broker's own crypto lines", () => {
+    const cat = buildCatalog(["BTCUSD", "BTCUSDT", "ETHUSD", "ETHUSDT", "EURUSD"], crypto);
+    const byId = new Map(cat.map((c) => [c.symbol, c]));
+    assert.equal(byId.get("BTCUSD")!.provider, "binance");
+    assert.equal(byId.get("BTCUSD")!.name, "BTCUSDT");
+    assert.equal(byId.get("ETHUSD")!.provider, "binance");
+    // The broker's USDT tickers are the same assets and must not linger.
+    assert.ok(!byId.has("BTCUSDT"));
+    assert.ok(!byId.has("ETHUSDT"));
+  });
+
+  test("a real FX pair is never displaced by a same-named crypto entry", () => {
+    const cat = buildCatalog(["EURUSD", "BTCUSD"], deriveCryptoPairs([raw("EUR", "USDT")]));
+    const eur = cat.find((c) => c.symbol === "EURUSD")!;
+    assert.equal(eur.provider, undefined);
+    assert.equal(eur.type, "forex");
+  });
+
+  test("symbols merely inferred as crypto are kept when Binance has no such asset", () => {
+    // inferType files these as crypto; they are real broker symbols.
+    const cat = buildCatalog(["NVIDIA", "USDNOK", "MAPFRE"], []);
+    const ids = cat.map((c) => c.symbol);
+    assert.ok(ids.includes("NVIDIA"));
+    assert.ok(ids.includes("USDNOK"));
+    assert.ok(ids.includes("MAPFRE"));
+  });
+
+  test("non-crypto broker symbols are untouched when crypto is merged in", () => {
+    const cat = buildCatalog(["EURUSD", "XAUUSD", "USTECH100", "ETHUSD"], crypto);
+    assert.ok(cat.some((c) => c.symbol === "EURUSD" && c.provider === undefined));
+    assert.ok(cat.some((c) => c.symbol === "XAUUSD"));
+    assert.ok(cat.some((c) => c.symbol === "USTECH100"));
+  });
+});
+
+describe("source routing", () => {
+  test("crypto reads from Binance first and keeps cTrader as a fallback", () => {
+    const meta = toSymbolMeta("BTCUSDT", "BTCUSD", "BTCUSDT");
+    assert.deepEqual(providerOrder(meta), ["binance", "ctrader"]);
+  });
+
+  test("non-crypto is broker-only", () => {
+    const meta = toSymbolMeta("XAUUSD", "XAUUSD");
+    assert.deepEqual(providerOrder(meta), ["ctrader"]);
+  });
+
+  test("crypto with no broker line has nothing to fall back to", () => {
+    const meta = toSymbolMeta(null, "SOLUSD", "SOLUSDT");
+    assert.deepEqual(providerOrder(meta), ["binance"]);
+  });
+
+  test("meta for a Binance-only market is typed crypto", () => {
+    const meta = toSymbolMeta(null, "SOLUSD", "SOLUSDT");
+    assert.equal(meta.type, "crypto");
+    assert.equal(meta.providers.binance, "SOLUSDT");
+    assert.equal(meta.providers.ctrader, undefined);
+  });
+});
+
+describe("timeframe coverage per source", () => {
+  test("every timeframe is servable by at least one source", () => {
+    for (const tf of TIMEFRAMES) {
+      const ok = tf.ctrader !== null || tf.binance;
+      assert.ok(ok, `${tf.id} has no source`);
+    }
+  });
+
+  test("Binance serves the intraday intervals natively", () => {
+    for (const id of ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"]) {
+      assert.equal(getTimeframe(id).binance, id, id);
+    }
+  });
+
+  test("weekly and monthly are aggregated from daily, since Binance has neither", () => {
+    for (const id of ["1w", "1M"]) {
+      const tf = getTimeframe(id);
+      assert.equal(tf.binance, null, id);
+      assert.equal(tf.aggregate, "1d", id);
+    }
+  });
+});
+
+describe("bar aggregation", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  test("folds daily bars into Monday-aligned UTC weeks", () => {
+    // Jan 1 2024 is a Monday. Dividing the epoch by 7 days would start the
+    // week on Thursday instead, which is what a chart must not show.
+    const start = Date.UTC(2024, 0, 1);
+    assert.equal(new Date(start).getUTCDay(), 1, "fixture must start on a Monday");
+    const daily = Array.from({ length: 14 }, (_, i) => ({
+      time: start + i * DAY,
+      open: 100 + i,
+      high: 100 + i,
+      low: 100 + i,
+      close: 100 + i,
+      volume: 1,
+    }));
+    const weeks = aggregate(daily, "week");
+    assert.equal(weeks.length, 2);
+    assert.equal(weeks[0].time, start);
+    assert.equal(weeks[1].time, start + 7 * DAY);
+    // First open, last close, summed volume.
+    assert.equal(weeks[0].open, 100);
+    assert.equal(weeks[0].close, 106);
+    assert.equal(weeks[0].volume, 7);
+  });
+
+  test("weeks beginning mid-week still start on the Monday", () => {
+    const wed = Date.UTC(2024, 0, 3); // Wednesday
+    const [week] = aggregate([{ time: wed, open: 5, high: 5, low: 5, close: 5, volume: 1 }], "week");
+    assert.equal(new Date(week.time).getUTCDay(), 1, "bucket must start on Monday");
+    assert.equal(week.time, Date.UTC(2024, 0, 1));
+  });
+
+  test("months are calendar months, not 30-day blocks", () => {
+    const jan = Date.UTC(2024, 0, 1);
+    // Jan has 31 days: a 30-day bucket would spill into February.
+    const daily = Array.from({ length: 31 }, (_, i) => ({
+      time: jan + i * DAY,
+      open: i,
+      high: i,
+      low: i,
+      close: i,
+      volume: 1,
+    }));
+    const months = aggregate(daily, "month");
+    assert.equal(months.length, 1);
+    assert.equal(months[0].time, jan);
+    assert.equal(months[0].volume, 31);
+  });
+
+  test("separate calendar months do not merge", () => {
+    const bars = [
+      { time: Date.UTC(2024, 0, 31), open: 1, high: 1, low: 1, close: 1, volume: 1 },
+      { time: Date.UTC(2024, 1, 1), open: 2, high: 2, low: 2, close: 2, volume: 1 },
+    ];
+    const months = aggregate(bars, "month");
+    assert.equal(months.length, 2);
+    assert.equal(months[0].volume, 1);
+    assert.equal(months[1].volume, 1);
+  });
+
+  test("keeps the extremes rather than the last value", () => {
+    const bars = [
+      { time: Date.UTC(2024, 0, 1), open: 10, high: 12, low: 9, close: 11, volume: 1 },
+      { time: Date.UTC(2024, 0, 2), open: 11, high: 30, low: 2, close: 20, volume: 1 },
+    ];
+    const [bucket] = aggregate(bars, "week");
+    assert.equal(bucket.high, 30);
+    assert.equal(bucket.low, 2);
+    assert.equal(bucket.close, 20);
+  });
+
+  test("buckets are stable regardless of input order", () => {
+    const mk = (d: number) => ({ time: Date.UTC(2024, 0, d), open: d, high: d, low: d, close: d, volume: 1 });
+    const ascending = aggregate([mk(1), mk(2), mk(8)], "week");
+    const descending = aggregate([mk(8), mk(2), mk(1)], "week");
+    assert.deepEqual(ascending, descending);
   });
 });

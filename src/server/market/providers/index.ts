@@ -1,24 +1,36 @@
-// Bar access for the Analysis page. One source: cTrader.
+// Bar access for the Analysis page. Two sources, routed by asset class:
+//
+//   crypto  -> Binance   (about 500 liquid pairs, years of daily history)
+//   all else-> cTrader   (forex, metals, indices, stocks)
+//
+// Crypto keeps cTrader as a fallback, so a Binance outage or a geo-block shows
+// the broker's line instead of an empty card.
 //
 // The read path is three layers, so a page load never waits on the broker:
 //
 //   memory  - same-process repeat reads and the detail view's all-timeframe sweep
 //   Mongo   - survives restarts, so a cold process still renders instantly
-//   cTrader - the only network hop, and only when both caches miss or go stale
+//   source  - the only network hop, and only when both caches miss or go stale
 //
 // When Mongo holds a stale series it is returned immediately and refreshed in
-// the background, so the page is never blocked waiting for the broker. Only a
+// the background, so the page is never blocked waiting for the network. Only a
 // first-ever fetch for a symbol/timeframe blocks, and that is unavoidable.
 
 import { getTimeframe } from "../timeframes";
 import * as breaker from "./breaker";
-import { readSeries, writeSeries, type StoredBar } from "../persist";
+import {
+  readSeries,
+  readBinanceSeries,
+  writeSeries,
+  writeBinanceSeries,
+  type StoredBar,
+} from "../persist";
 import * as rateLimit from "./rateLimit";
+import { binance } from "./binance";
 import { ctrader, cTraderCatalog, marketSymbolRef } from "./ctrader";
 import type {
   AnalysisSettings,
   Candle,
-  CandleResult,
   MarketProvider,
   ProviderId,
   ProviderWarning,
@@ -26,22 +38,13 @@ import type {
   Timeframe,
 } from "../types";
 
-const REGISTRY: Record<ProviderId, MarketProvider> = { ctrader };
-
-const ORDER: ProviderId[] = ["ctrader"];
+const REGISTRY: Record<ProviderId, MarketProvider> = { ctrader, binance };
 
 /** Bars actually returned before a result is trusted. */
 export const MIN_CANDLES = 30;
 
-interface CacheEntry {
-  at: number;
-  series: Candle[];
-}
-
-const cache = new Map<string, CacheEntry>();
-
-// How long to skip cTrader after it says "You are being rate limited". Short,
-// because the limit is a pacing window rather than an outage.
+/** How long to skip the network after cTrader says "You are being rate limited".
+ *  Short, because the limit is a pacing window rather than an outage. */
 const RATE_LIMIT_COOLDOWN_MS = 20_000;
 
 let lastRateLimitAt = 0;
@@ -53,12 +56,62 @@ function inRateLimitWindow(now: number): boolean {
 /** Background refreshes already in flight, so a poll does not stack duplicates. */
 const refreshing = new Set<string>();
 
+interface CacheEntry {
+  at: number;
+  series: Candle[];
+}
+
+const cache = new Map<string, CacheEntry>();
+
+function cacheKey(pid: ProviderId, meta: SymbolMeta, tf: Timeframe): string {
+  return `${pid}:${meta.symbol}:${tf.id}`;
+}
+
+/** Where a series can be read from: a broker symbol id, or a Binance pair. */
+type SourceRef = { kind: "ctrader"; ctid: number; symbolId: number } | { kind: "binance"; pair: string };
+
+/**
+ * Which sources to try, in order.
+ *
+ * Crypto goes to Binance first and falls back to the broker. Everything else is
+ * broker-only: Binance carries no forex, metals, or indices, and offering it
+ * first would only add failed lookups.
+ */
+export function providerOrder(meta: SymbolMeta): ProviderId[] {
+  const order: ProviderId[] = [];
+  if (meta.providers?.binance) order.push("binance");
+  if (meta.providers?.ctrader) order.push("ctrader");
+  return order;
+}
+
+async function resolveRef(pid: ProviderId, meta: SymbolMeta): Promise<SourceRef | null> {
+  if (pid === "binance") {
+    const pair = meta.providers?.binance;
+    return pair ? { kind: "binance", pair } : null;
+  }
+  const resolved = await marketSymbolRef(meta);
+  return resolved ? { kind: "ctrader", ...resolved } : null;
+}
+
+function readPersist(ref: SourceRef, tf: Timeframe) {
+  return ref.kind === "binance"
+    ? readBinanceSeries(ref.pair, tf.id)
+    : readSeries(ref.ctid, ref.symbolId, tf.id);
+}
+
+function writePersist(ref: SourceRef, tf: Timeframe, bars: Candle[]) {
+  const payload = bars as StoredBar[];
+  return ref.kind === "binance"
+    ? writeBinanceSeries(ref.pair, tf.id, payload)
+    : writeSeries(ref.ctid, ref.symbolId, tf.id, payload);
+}
+
 export interface BarsResult {
   provider: ProviderId;
   bars: Candle[];
   warnings: ProviderWarning[];
   cached: boolean;
-  /** True when the broker is updating this series but we served stored bars. */
+  /** True when the source is updating this series but we served stored bars. */
   stale: boolean;
 }
 
@@ -70,8 +123,35 @@ export async function getCandles(
 ): Promise<BarsResult> {
   const tf: Timeframe = getTimeframe(timeframeId);
   const warnings: ProviderWarning[] = [];
-  const pid = ORDER[0];
-  const key = `${pid}:${meta.symbol}:${tf.id}`;
+  const order = providerOrder(meta);
+
+  if (!order.length) {
+    throw new Error(noSourceError([{ provider: "ctrader", message: "no source configured" }]));
+  }
+
+  // A non-ctrader result is always trustworthy, so a later source is only tried
+  // when the earlier one produced nothing at all.
+  for (const pid of order) {
+    const ref = await resolveRef(pid, meta);
+    if (!ref) continue;
+    const hit = await readThrough(pid, meta, tf, settings, ref, warnings, force);
+    if (hit) return hit;
+  }
+
+  throw new Error(noSourceError(warnings));
+}
+
+/** One source's full cache chain. Returns null when it cannot serve the series. */
+async function readThrough(
+  pid: ProviderId,
+  meta: SymbolMeta,
+  tf: Timeframe,
+  settings: AnalysisSettings,
+  ref: SourceRef,
+  warnings: ProviderWarning[],
+  force: boolean
+): Promise<BarsResult | null> {
+  const key = cacheKey(pid, meta, tf);
 
   // 1. Hot memory cache.
   const hot = cache.get(key);
@@ -80,13 +160,12 @@ export async function getCandles(
     return { provider: pid, bars: hot.series, warnings, cached: true, stale: false };
   }
 
-  const ref = await marketSymbolRef(meta);
   const freshAfter = Date.now() - tf.ttl * 1000;
 
-  // 2. Mongo. A fresh stored series needs no broker call at all; a stale one is
+  // 2. Mongo. A fresh stored series needs no network call at all; a stale one is
   //    still the best answer available, so return it and refresh behind it.
-  if (!force && ref) {
-    const stored = await readSeries(ref.ctid, ref.symbolId, tf.id).catch(() => null);
+  if (!force) {
+    const stored = await readPersist(ref, tf).catch(() => null);
     if (stored && stored.bars.length >= MIN_CANDLES) {
       const fresh = stored.fetchedAt >= freshAfter;
       cache.set(key, { at: stored.fetchedAt, series: stored.bars });
@@ -94,38 +173,44 @@ export async function getCandles(
         breaker.recordSuccess(pid);
         return { provider: pid, bars: stored.bars, warnings, cached: true, stale: false };
       }
-      void refreshInBackground(pid, meta, tf, key, ref.ctid, ref.symbolId);
+      void refreshInBackground(pid, meta, tf, key, ref);
       return { provider: pid, bars: stored.bars, warnings, cached: true, stale: true };
     }
   }
 
-  // 3. Broker. Nothing usable stored, so this one has to wait.
-  const candles = await fetchFromBroker(pid, meta, tf, warnings);
+  // 3. Network. Nothing usable stored, so this one has to wait.
+  const candles = await fetchFromSource(pid, meta, tf, settings, warnings, ref);
+  if (!candles.length) return null;
   cache.set(key, { at: Date.now(), series: candles });
-  if (ref) void writeSeries(ref.ctid, ref.symbolId, tf.id, candles).catch(() => {});
+  void writePersist(ref, tf, candles).catch(() => {});
   return { provider: pid, bars: candles, warnings, cached: false, stale: false };
 }
 
-/** Read the bars behind a resolved symbol, or throw the aggregated reason. */
+/** Read the bars behind a resolved symbol, or null. */
 export function cachedBars(meta: SymbolMeta, timeframeId: string): Candle[] | null {
-  const entry = cache.get(`${ORDER[0]}:${meta.symbol}:${timeframeId}`);
-  return entry ? entry.series : null;
+  for (const pid of providerOrder(meta)) {
+    const entry = cache.get(`${pid}:${meta.symbol}:${timeframeId}`);
+    if (entry) return entry.series;
+  }
+  return null;
 }
 
-async function fetchFromBroker(
+async function fetchFromSource(
   pid: ProviderId,
   meta: SymbolMeta,
   tf: Timeframe,
-  warnings: ProviderWarning[]
+  settings: AnalysisSettings,
+  warnings: ProviderWarning[],
+  ref: SourceRef
 ): Promise<Candle[]> {
   const p = REGISTRY[pid];
   try {
     const release = await rateLimit.acquire(pid);
     try {
-      const candles = await p.fetchCandles(meta, tf, { settings: {} as AnalysisSettings });
+      const candles = await p.fetchCandles(meta, tf, { settings });
       if (!Array.isArray(candles) || candles.length < MIN_CANDLES) {
         throw new Error(
-          `only ${candles ? candles.length : 0} bars (cTrader may not keep that much history)`
+          `only ${candles ? candles.length : 0} bars (the source may not keep that much history)`
         );
       }
       breaker.recordSuccess(pid);
@@ -135,15 +220,15 @@ async function fetchFromBroker(
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    const rateLimited = /rate limit|BLOCKED_PAYLOAD_TYPE/i.test(message);
-    if (rateLimited) lastRateLimitAt = Date.now();
+    const rateLimited = /rate limit|BLOCKED_PAYLOAD_TYPE|429|418/i.test(message);
+    if (rateLimited && pid === "ctrader") lastRateLimitAt = Date.now();
     breaker.recordFailure(pid, rateLimited ? "rate limit" : message);
     warnings.push({ provider: pid, message });
-    // A previous run may have left usable bars in memory even when the broker
+    // A previous run may have left usable bars in memory even when the source
     // is refusing; stale data beats an empty card.
-    const stale = cache.get(`${pid}:${meta.symbol}:${tf.id}`);
+    const stale = cache.get(cacheKey(pid, meta, tf));
     if (stale) return stale.series;
-    throw new Error(noSourceError(warnings));
+    return [];
   }
 }
 
@@ -152,11 +237,10 @@ async function refreshInBackground(
   meta: SymbolMeta,
   tf: Timeframe,
   key: string,
-  ctid: number,
-  symbolId: number
+  ref: SourceRef
 ): Promise<void> {
   if (refreshing.has(key)) return;
-  if (inRateLimitWindow(Date.now())) return;
+  if (pid === "ctrader" && inRateLimitWindow(Date.now())) return;
   refreshing.add(key);
   try {
     const release = await rateLimit.acquire(pid);
@@ -169,7 +253,7 @@ async function refreshInBackground(
       release();
     }
     cache.set(key, { at: Date.now(), series: bars });
-    await writeSeries(ctid, symbolId, tf.id, bars as StoredBar[]).catch(() => {});
+    await writePersist(ref, tf, bars).catch(() => {});
   } catch {
     // Silent by design: the caller already has usable stored bars.
   } finally {
@@ -177,13 +261,24 @@ async function refreshInBackground(
   }
 }
 
-/** The only diagnostic a user gets when bars cannot be read, so it has to be
- *  specific about what failed and why. Exported for testing. */
+/** Display names, so an error reads "from cTrader" rather than "from ctrader". */
+const PROVIDER_LABEL: Record<ProviderId, string> = { ctrader: "cTrader", binance: "Binance" };
+
+function listProviders(names: ProviderId[]): string {
+  const labels = names.map((n) => PROVIDER_LABEL[n] || n);
+  if (labels.length <= 1) return labels.join("");
+  return `${labels.slice(0, -1).join(", ")} or ${labels[labels.length - 1]}`;
+}
+
+/** The only diagnostic a user gets when bars cannot be read, so it has to name
+ *  every source that was tried and say why each one failed. Exported for testing. */
 export function noSourceError(warnings: ProviderWarning[]): string {
-  const detail = warnings.map((w) => `${w.provider}: ${w.message}`).join("; ");
+  if (!warnings.length) return "Could not read bars from any configured source.";
+  const detail = warnings.map((w) => `${PROVIDER_LABEL[w.provider] || w.provider}: ${w.message}`).join("; ");
+  const names = [...new Set(warnings.map((w) => w.provider))];
   return (
-    `Could not read bars from cTrader (${detail}). ` +
-    "Check that the account is connected and that the broker lists this symbol."
+    `Could not read bars from ${listProviders(names)} (${detail}). ` +
+    "Check that the source is reachable and lists this symbol."
   );
 }
 
@@ -195,4 +290,5 @@ export function clearCache(): void {
   lastRateLimitAt = 0;
 }
 
-export { ctrader, cTraderCatalog };
+export { ctrader, cTraderCatalog, binance };
+export { REGISTRY };

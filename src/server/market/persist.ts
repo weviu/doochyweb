@@ -1,4 +1,4 @@
-// Persistent cache of cTrader bars, in Mongo.
+// Persistent cache of bars, in Mongo. Holds both cTrader and Binance series.
 //
 // The pacer means a cold fetch costs roughly a second per few symbols, which
 // the user sees as a slow page every time the process restarts or a bar TTL
@@ -10,9 +10,16 @@
 // [time, o, h, l, c, v] tuples is a fraction of the size of 480 nested objects,
 // and the whole document stays well inside Mongo's 16MB ceiling.
 //
-// Documents are keyed by account + broker symbol + timeframe. The broker's
-// symbolId is stable for a given account, and including the account means
-// pointing the page at a different account cannot read another account's series.
+// Documents are keyed per source:
+//
+//   cTrader: "<ctid>:<symbolId>:<timeframe>". The broker's symbolId is stable for
+//   a given account, and including the account means pointing the page at a
+//   different account cannot read another account's series.
+//   Binance: "binance:<pair>:<timeframe>". The pair name is already unique, and
+//   the "binance:" prefix cannot collide with the numeric cTrader form.
+//
+// The cTrader key is unchanged, so series stored before Binance was added stay
+// readable and are not refetched.
 
 import mongoose from "mongoose";
 
@@ -32,8 +39,12 @@ const BarSchema = new mongoose.Schema(
 const marketCandlesSchema = new mongoose.Schema(
   {
     _id: { type: String, required: true },
-    ctid: { type: Number, required: true },
-    symbolId: { type: Number, required: true },
+    /** Absent for Binance series. */
+    ctid: { type: Number },
+    /** Absent for Binance series. */
+    symbolId: { type: Number },
+    /** Which source wrote this series. Defaults to cTrader for older documents. */
+    provider: { type: String, required: false },
     timeframe: { type: String, required: true },
     bars: { type: [BarSchema], default: [] },
     fetchedAt: { type: Date, required: true, default: Date.now },
@@ -46,8 +57,9 @@ marketCandlesSchema.index({ fetchedAt: 1 });
 type CandleDoc = { t: number; o: number; h: number; l: number; c: number; v: number };
 type MarketCandleDoc = {
   _id: string;
-  ctid: number;
-  symbolId: number;
+  ctid?: number;
+  symbolId?: number;
+  provider?: string;
   timeframe: string;
   bars: CandleDoc[];
   fetchedAt: Date;
@@ -70,13 +82,28 @@ export function seriesKey(ctid: number, symbolId: number, timeframe: string): st
   return `${ctid}:${symbolId}:${timeframe}`;
 }
 
+export function binanceSeriesKey(pair: string, timeframe: string): string {
+  return `binance:${pair}:${timeframe}`;
+}
+
 /** Read a stored series, or null when it has never been fetched. */
 export async function readSeries(
   ctid: number,
   symbolId: number,
   timeframe: string
 ): Promise<{ bars: StoredBar[]; fetchedAt: number } | null> {
-  const doc = await MarketCandles.findById(seriesKey(ctid, symbolId, timeframe))
+  return readByKey(seriesKey(ctid, symbolId, timeframe));
+}
+
+export async function readBinanceSeries(
+  pair: string,
+  timeframe: string
+): Promise<{ bars: StoredBar[]; fetchedAt: number } | null> {
+  return readByKey(binanceSeriesKey(pair, timeframe));
+}
+
+async function readByKey(key: string): Promise<{ bars: StoredBar[]; fetchedAt: number } | null> {
+  const doc = await MarketCandles.findById(key)
     .select("bars fetchedAt")
     .lean()
     .exec();
@@ -101,14 +128,33 @@ export async function writeSeries(
   timeframe: string,
   bars: StoredBar[]
 ): Promise<void> {
+  await writeByKey(seriesKey(ctid, symbolId, timeframe), { ctid, symbolId, timeframe, bars });
+}
+
+export async function writeBinanceSeries(
+  pair: string,
+  timeframe: string,
+  bars: StoredBar[]
+): Promise<void> {
+  await writeByKey(binanceSeriesKey(pair, timeframe), { provider: "binance", timeframe, bars });
+}
+
+async function writeByKey(
+  key: string,
+  fields: {
+    ctid?: number;
+    symbolId?: number;
+    provider?: string;
+    timeframe: string;
+    bars: StoredBar[];
+  }
+): Promise<void> {
   await MarketCandles.updateOne(
-    { _id: seriesKey(ctid, symbolId, timeframe) },
+    { _id: key },
     {
       $set: {
-        ctid,
-        symbolId,
-        timeframe,
-        bars: bars.map((b) => ({
+        ...fields,
+        bars: fields.bars.map((b) => ({
           t: b.time,
           o: b.open,
           h: b.high,

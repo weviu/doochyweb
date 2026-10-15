@@ -14,6 +14,7 @@
 // punctuation-insensitive match. Anything else is reported as untradable rather
 // than guessed at.
 
+import { baseAssetOf } from "./crypto";
 import type { CatalogEntry, SymbolMeta, SymbolType } from "./types";
 
 // Familiar name -> broker symbol name. Keys are the short forms used by the
@@ -115,14 +116,29 @@ export function resolveAgainstBroker(input: unknown, available: string[]): strin
   return null;
 }
 
-/** Build the meta the analysis engine expects, from a resolved broker name. */
-export function toSymbolMeta(brokerName: string, requested?: string): SymbolMeta {
+/**
+ * Build the meta the analysis engine expects.
+ *
+ * `binancePair` is the Binance spot pair for a crypto market, if there is one.
+ * When present it becomes the primary source and the broker name, if any, is
+ * kept as the fallback.
+ */
+export function toSymbolMeta(
+  brokerName: string | null,
+  requested?: string,
+  binancePair?: string | null
+): SymbolMeta {
+  const name = brokerName || requested || binancePair || "";
+  const type = binancePair ? "crypto" : inferType(name);
+  const providers: SymbolMeta["providers"] = {};
+  if (binancePair) providers.binance = binancePair;
+  if (brokerName) providers.ctrader = brokerName;
   return {
-    symbol: requested && requested !== brokerName ? requested : brokerName,
-    name: brokerName,
-    type: inferType(brokerName),
-    providers: { ctrader: brokerName },
-    note: requested && requested !== brokerName ? `cTrader symbol: ${brokerName}` : undefined,
+    symbol: requested || brokerName || name,
+    name,
+    type,
+    providers,
+    note: brokerName && requested && requested !== brokerName ? `cTrader symbol: ${brokerName}` : undefined,
   };
 }
 
@@ -130,17 +146,41 @@ export function toSymbolMeta(brokerName: string, requested?: string): SymbolMeta
  * The add-market catalog: every symbol the account can trade, plus an entry for
  * each alias that this account can actually serve (so US500 appears even though
  * the broker calls it "US 500").
+ *
+ * `crypto` carries the Binance universe. Those entries replace the broker's own
+ * crypto lines rather than sitting beside them, so an asset appears once even
+ * when both sources spell it differently. Broker entries are only displaced when
+ * the crypto list really covers that asset, because the type inference is too
+ * loose to identify crypto on its own: it files 106 real symbols (NVIDIA,
+ * USDNOK, MAPFRE) as crypto. Fiat bases are excluded from the crypto list, so
+ * EURUSD stays a broker forex pair and is never shadowed by Binance's EURUSDT.
  */
-export function buildCatalog(available: string[]): CatalogEntry[] {
+export function buildCatalog(
+  available: string[],
+  crypto: { symbol: string; pair: string; base: string }[] = []
+): CatalogEntry[] {
+  const cryptoSymbols = new Map(crypto.map((c) => [c.symbol, c.pair]));
+  const cryptoBases = new Set(crypto.map((c) => c.base));
+  // Match on the asset, not just the ticker: the broker lists BTC as both
+  // "BTCUSD" and "BTCUSDT", and neither spelling equals Binance's display
+  // symbol, so a symbol-only check would leave the duplicate behind.
+  const covered = (ticker: string) => cryptoSymbols.has(ticker) || cryptoBases.has(baseAssetOf(ticker));
+
   const out = new Map<string, CatalogEntry>();
   for (const name of available) {
     const short = normalizeSymbol(name);
     if (!short) continue;
+    if (covered(short)) continue;
     out.set(short, { symbol: short, name, type: inferType(name) });
   }
   for (const [alias, target] of Object.entries(ALIASES)) {
-    if (out.has(alias) || !available.includes(target)) continue;
+    // The alias table maps BTCUSDT to BTCUSD, so this loop will otherwise put
+    // back the very broker entry the filter above just removed.
+    if (out.has(alias) || covered(alias) || !available.includes(target)) continue;
     out.set(alias, { symbol: alias, name: target, type: inferType(target) });
+  }
+  for (const [symbol, pair] of cryptoSymbols) {
+    out.set(symbol, { symbol, name: pair, type: "crypto", provider: "binance" });
   }
   return [...out.values()];
 }

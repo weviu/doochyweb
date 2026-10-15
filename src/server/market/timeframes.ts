@@ -5,8 +5,9 @@
 // (not a minute count) and which caps how far back a single request may reach
 // per period. Both are encoded here so the provider stays a thin adapter.
 //
-// Ported from the standalone `gauge` project, then reduced to the one source
-// that remains.
+// Binance publishes klines on its own interval names. It has no weekly or
+// monthly interval at all, so `aggregate` names the interval those two are
+// built from instead.
 
 import type { Timeframe } from "./types";
 
@@ -21,16 +22,16 @@ const ONE_YEAR = 31_622_400_000;     // H4, H12, D1
 const FIVE_YEARS = 158_112_000_000;  // W1, MN1
 
 export const TIMEFRAMES: Timeframe[] = [
-  { id: "1m",  label: "1 min",   ms: 60 * 1000,           ttl: 60,   ctrader: M1,  ctraderMaxRange: FIVE_WEEKS },
-  { id: "3m",  label: "3 min",   ms: 3 * 60 * 1000,       ttl: 60,   ctrader: M3,  ctraderMaxRange: FIVE_WEEKS },
-  { id: "5m",  label: "5 min",   ms: 5 * 60 * 1000,       ttl: 60,   ctrader: M5,  ctraderMaxRange: FIVE_WEEKS },
-  { id: "15m", label: "15 min",  ms: 15 * 60 * 1000,      ttl: 120,  ctrader: M15, ctraderMaxRange: THIRTY_FIVE_WEEKS },
-  { id: "30m", label: "30 min",  ms: 30 * 60 * 1000,      ttl: 180,  ctrader: M30, ctraderMaxRange: THIRTY_FIVE_WEEKS },
-  { id: "1h",  label: "1 hour",  ms: 60 * 60 * 1000,      ttl: 300,  ctrader: H1,  ctraderMaxRange: THIRTY_FIVE_WEEKS },
-  { id: "4h",  label: "4 hours", ms: 4 * 60 * 60 * 1000,  ttl: 600,  ctrader: H4,  ctraderMaxRange: ONE_YEAR },
-  { id: "1d",  label: "1 day",   ms: 24 * 60 * 60 * 1000, ttl: 900,  ctrader: D1,  ctraderMaxRange: ONE_YEAR },
-  { id: "1w",  label: "1 week",  ms: 7 * 24 * 60 * 60 * 1000, ttl: 3600, ctrader: W1, ctraderMaxRange: FIVE_YEARS },
-  { id: "1M",  label: "1 month", ms: 30 * 24 * 60 * 60 * 1000, ttl: 3600, ctrader: MN1, ctraderMaxRange: FIVE_YEARS },
+  { id: "1m",  label: "1 min",   ms: 60 * 1000,           ttl: 60,   ctrader: M1,  ctraderMaxRange: FIVE_WEEKS, binance: "1m" },
+  { id: "3m",  label: "3 min",   ms: 3 * 60 * 1000,       ttl: 60,   ctrader: M3,  ctraderMaxRange: FIVE_WEEKS, binance: "3m" },
+  { id: "5m",  label: "5 min",   ms: 5 * 60 * 1000,       ttl: 60,   ctrader: M5,  ctraderMaxRange: FIVE_WEEKS, binance: "5m" },
+  { id: "15m", label: "15 min",  ms: 15 * 60 * 1000,      ttl: 120,  ctrader: M15, ctraderMaxRange: THIRTY_FIVE_WEEKS, binance: "15m" },
+  { id: "30m", label: "30 min",  ms: 30 * 60 * 1000,      ttl: 180,  ctrader: M30, ctraderMaxRange: THIRTY_FIVE_WEEKS, binance: "30m" },
+  { id: "1h",  label: "1 hour",  ms: 60 * 60 * 1000,      ttl: 300,  ctrader: H1,  ctraderMaxRange: THIRTY_FIVE_WEEKS, binance: "1h" },
+  { id: "4h",  label: "4 hours", ms: 4 * 60 * 60 * 1000,  ttl: 600,  ctrader: H4,  ctraderMaxRange: ONE_YEAR, binance: "4h" },
+  { id: "1d",  label: "1 day",   ms: 24 * 60 * 60 * 1000, ttl: 900,  ctrader: D1,  ctraderMaxRange: ONE_YEAR, binance: "1d" },
+  { id: "1w",  label: "1 week",  ms: 7 * 24 * 60 * 60 * 1000, ttl: 3600, ctrader: W1, ctraderMaxRange: FIVE_YEARS, binance: null, aggregate: "1d", bucket: "week" },
+  { id: "1M",  label: "1 month", ms: 30 * 24 * 60 * 60 * 1000, ttl: 3600, ctrader: MN1, ctraderMaxRange: FIVE_YEARS, binance: null, aggregate: "1d", bucket: "month" },
 ];
 
 export const DEFAULT_TIMEFRAME = "1d";

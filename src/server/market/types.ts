@@ -20,6 +20,8 @@ export type SymbolType = "forex" | "commodity" | "crypto" | "index" | "stock" | 
 export interface ProviderMap {
   /** Broker symbol name. Set by the symbol resolver, not by the catalog. */
   ctrader?: string | null;
+  /** Binance spot pair, e.g. "SOLUSDT". Set only for crypto markets. */
+  binance?: string | null;
 }
 
 /** Canonical description of a tradable market. */
@@ -42,6 +44,16 @@ export interface Timeframe {
   ctrader: number | null;
   /** Largest (toTimestamp - fromTimestamp) cTrader accepts for this period. */
   ctraderMaxRange: number;
+  /** Binance klines interval, e.g. "1h". Null where Binance cannot serve it. */
+  binance?: string | null;
+  /** The longer timeframe this period is aggregated from, when the source does
+   *  not offer it directly. Binance publishes no weekly or monthly klines, so
+   *  1w and 1M are built from daily bars. */
+  aggregate?: string;
+  /** Calendar bucket for an aggregated period. Weeks start Monday, months start
+   *  on the 1st, both UTC. A fixed day count would misplace both: epoch-aligned
+   *  weeks begin on Thursday, and a "month" is not 30 days. */
+  bucket?: "week" | "month";
 }
 
 /** The five-level verdict, ordered from most bearish to most bullish. */
@@ -121,7 +133,7 @@ export interface TimeframeRating {
   error?: string;
 }
 
-export type ProviderId = "ctrader";
+export type ProviderId = "ctrader" | "binance";
 
 export interface ProviderWarning {
   provider: ProviderId;
@@ -170,4 +182,6 @@ export interface CatalogEntry {
   symbol: string;
   name: string;
   type: SymbolType;
+  /** Present when this entry is served by a non-broker source. */
+  provider?: ProviderId;
 }

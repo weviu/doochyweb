@@ -15,15 +15,20 @@
 // An earlier version allowed one request per 1.2s and, worse, multiplied the
 // wait by the queue length, so a 7-symbol sweep took 6.9s even though the broker
 // answers in about 65ms. Nothing here needs to be that slow.
+//
+// Binance is governed by a published weight budget rather than a socket
+// ceiling: 1200 per minute per IP, with each klines request costing 2. The
+// policy below is far inside that, and exists mainly to stop a runaway loop
+// from being rude rather than to avoid being throttled.
 import type { ProviderId } from "../types";
 
 
-/** Ceiling on requests in flight on the socket. The broker starts refusing
- *  above 5, so stay clear of it. */
+/** cTrader's ceiling on requests in flight on the socket. The broker starts
+ *  refusing above 5, so stay clear of it. */
 export const MAX_IN_FLIGHT = 4;
 
-/** Steady-state spacing between request starts. */
-const MIN_SPACING_MS = 200;
+/** Steady-state spacing between request starts, per provider. */
+const MIN_SPACING_MS: Record<ProviderId, number> = { ctrader: 200, binance: 50 };
 
 const REFILL_INTERVAL_MS = 60_000;
 
@@ -32,12 +37,17 @@ interface Policy {
   capacity: number;
   /** Steady-state refill, per minute. */
   perMinute: number;
+  /** Ceiling on requests in flight at once. */
+  maxInFlight: number;
 }
 
 const POLICIES: Record<ProviderId, Policy | null> = {
   // capacity 4 at one request per 200ms = 300/min, comfortably above what the
   // broker serves but well under anything that trips the throttle.
-  ctrader: { capacity: 4, perMinute: 300 },
+  ctrader: { capacity: 4, perMinute: 300, maxInFlight: MAX_IN_FLIGHT },
+  // 600 klines/min at weight 2 = 1200 weight/min, exactly the published cap.
+  // Held a little under so a burst cannot sit right on the ceiling.
+  binance: { capacity: 12, perMinute: 400, maxInFlight: 12 },
 };
 
 interface Bucket {
@@ -71,8 +81,8 @@ function refill(b: Bucket, policy: Policy): void {
 }
 
 /** Hand the slot straight to the head of the queue when one is waiting. */
-function pump(provider: ProviderId, b: Bucket, policy: Policy): void {
-  while (b.queue.length > 0 && b.inFlight < MAX_IN_FLIGHT) {
+function pump(b: Bucket, policy: Policy): void {
+  while (b.queue.length > 0 && b.inFlight < policy.maxInFlight) {
     const waiter = b.queue.shift()!;
     if (waiter.timer) clearTimeout(waiter.timer);
     b.tokens = Math.max(0, b.tokens - 1);
@@ -96,7 +106,7 @@ export function acquire(provider: ProviderId): Promise<() => void> {
 
     // Immediate admission: a free token, room on the wire, and nobody waiting
     // ahead of us. Otherwise queue, and let pump() hand over in FIFO order.
-    if (head && b.tokens >= 1 && b.inFlight < MAX_IN_FLIGHT) {
+    if (head && b.tokens >= 1 && b.inFlight < policy.maxInFlight) {
       b.tokens -= 1;
       b.inFlight += 1;
       return resolve(release(b));
@@ -117,7 +127,7 @@ export function acquire(provider: ProviderId): Promise<() => void> {
       b.tokens = Math.max(0, b.tokens - 1);
       b.inFlight += 1;
       waiter.resolve();
-    }, MIN_SPACING_MS);
+    }, MIN_SPACING_MS[provider]);
   });
 }
 

@@ -27,6 +27,7 @@ export const ZONE_COLORS = ZONE_ORDER.map((r) => RATINGS[r].color);
 
 export const PROVIDERS: Record<string, string> = {
   ctrader: "cTrader",
+  binance: "Binance",
 };
 
 export function ratingColor(rating: string | undefined): string {
